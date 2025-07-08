@@ -1,0 +1,16 @@
+{
+  "name": "travel-agency-desktop",
+  "version": "1.0.0",
+  "description": "Desktop version of the Travel Agency Management System",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "vite build frontend"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^28.3.3"
+  }
+}

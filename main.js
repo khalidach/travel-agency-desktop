@@ -1,3 +1,4 @@
+// main.js
 const { app, BrowserWindow } = require("electron");
 const path = require("path");
 const backendApp = require("./backend/index.js"); // Import the express app
@@ -12,12 +13,16 @@ function createWindow() {
       nodeIntegration: true,
       contextIsolation: false,
     },
+    icon: path.join(__dirname, "assets", "icon.png"), // Optional: Add an app icon
   });
 
-  // Load the URL from the Vite dev server
-  win.loadURL("http://localhost:5173");
+  // Load the built frontend from the 'dist' folder
+  win.loadFile(path.join(__dirname, "frontend/dist/index.html"));
 
-  win.webContents.openDevTools();
+  // Open DevTools only if the app is not packaged for production
+  if (!app.isPackaged) {
+    win.webContents.openDevTools();
+  }
 }
 
 // Start the backend server before creating the window
@@ -25,11 +30,7 @@ const server = backendApp.listen(PORT, () => {
   console.log(`Backend server is listening on http://localhost:${PORT}`);
 
   // Create the Electron window once the server is ready
-  if (!app.isReady()) {
-    app.whenReady().then(createWindow);
-  } else {
-    createWindow();
-  }
+  app.whenReady().then(createWindow);
 });
 
 app.on("activate", () => {

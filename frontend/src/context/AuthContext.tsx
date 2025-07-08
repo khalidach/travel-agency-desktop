@@ -1,3 +1,4 @@
+// frontend/src/context/AuthContext.tsx
 import React, {
   createContext,
   useContext,
@@ -19,7 +20,8 @@ type AuthAction =
   | { type: "LOGIN"; payload: User }
   | { type: "REFRESH_TOKEN"; payload: User }
   | { type: "LOGOUT" }
-  | { type: "SET_LOADING"; payload: boolean };
+  | { type: "SET_LOADING"; payload: boolean }
+  | { type: "UPDATE_USER_DETAILS"; payload: { agencyName?: string } };
 
 // Use sessionStorage to ensure session is cleared when the tab is closed.
 const userFromStorage = sessionStorage.getItem("user");
@@ -54,6 +56,16 @@ function authReducer(state: AuthState, action: AuthAction): AuthState {
       };
     case "SET_LOADING":
       return { ...state, loading: action.payload };
+    case "UPDATE_USER_DETAILS":
+      if (state.user) {
+        const updatedUser = { ...state.user, ...action.payload };
+        sessionStorage.setItem("user", JSON.stringify(updatedUser));
+        return {
+          ...state,
+          user: updatedUser,
+        };
+      }
+      return state;
     default:
       return state;
   }

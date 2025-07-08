@@ -41,6 +41,21 @@ const protect = async (req, res, next) => {
           .json({ message: "Not authorized, user not found" });
       }
 
+      // Parse facturationSettings from JSON string
+      if (
+        user.facturationSettings &&
+        typeof user.facturationSettings === "string"
+      ) {
+        try {
+          user.facturationSettings = JSON.parse(user.facturationSettings);
+        } catch (e) {
+          console.error("Failed to parse facturationSettings:", e);
+          user.facturationSettings = {}; // Default to empty object on parse error
+        }
+      } else if (!user.facturationSettings) {
+        user.facturationSettings = {};
+      }
+
       // Attach the simplified user object to the request
       req.user = {
         ...user,

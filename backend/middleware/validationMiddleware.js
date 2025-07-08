@@ -93,7 +93,7 @@ const paymentValidation = [
   body("method")
     .isIn(["cash", "cheque", "transfer", "card"])
     .withMessage("Invalid payment method."),
-  body("date").isISO8601().toDate().withMessage("Invalid payment date."),
+  body("date").isISO8601().withMessage("Invalid payment date."),
 ];
 
 const dailyServiceValidation = [
@@ -116,7 +116,7 @@ const dailyServiceValidation = [
       }
       return true;
     }),
-  body("date").isISO8601().toDate().withMessage("Invalid service date."),
+  body("date").isISO8601().withMessage("Invalid service date."),
 ];
 
 module.exports = {

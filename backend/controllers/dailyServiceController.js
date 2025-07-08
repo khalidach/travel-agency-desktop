@@ -159,6 +159,7 @@ const getDailyServiceReport = async (req, res) => {
     dateString && !isNaN(new Date(dateString));
 
   try {
+    // 1. Lifetime Summary (for top cards) - No date filter
     const lifetimeSummaryPromise = dbGet(
       req.db,
       `
@@ -170,21 +171,31 @@ const getDailyServiceReport = async (req, res) => {
       [adminId]
     );
 
-    const monthlyTrendPromise = dbAll(
-      req.db,
-      `
+    // 2. Monthly Trend (last 6 months) - Always last 6 months, ignores date range filter
+    const monthlyTrendQuery = `
         SELECT strftime('%Y-%m', date) as month, SUM(profit) as profit
         FROM daily_services
         WHERE "userId" = ? AND date(date) >= date('now', '-6 months')
-        GROUP BY month ORDER BY month ASC`,
-      [adminId]
-    );
+        GROUP BY month ORDER BY month ASC`;
+    const monthlyTrendPromise = dbAll(req.db, monthlyTrendQuery, [adminId]);
 
+    // 3. Detailed Performance (by type) - Lifetime data, ignores date range filter
+    const byTypeQuery = `
+        SELECT type, COUNT(*) as "count",
+               COALESCE(SUM("originalPrice"), 0) as "totalOriginalPrice",
+               COALESCE(SUM("totalPrice"), 0) as "totalSalePrice",
+               COALESCE(SUM(commission), 0) as "totalCommission",
+               COALESCE(SUM(profit), 0) as "totalProfit"
+        FROM daily_services WHERE "userId" = ?
+        GROUP BY type ORDER BY type`;
+    const byTypePromise = dbAll(req.db, byTypeQuery, [adminId]);
+
+    // 4. Filtered Summary (for the filter box) - This is the only part that uses the date filter
     let dateFilterClause = "";
-    const filteredQueryParams = [adminId];
+    const dateParams = [];
     if (isValidDate(startDate) && isValidDate(endDate)) {
       dateFilterClause = `AND date(date) BETWEEN date(?) AND date(?)`;
-      filteredQueryParams.push(startDate, endDate);
+      dateParams.push(startDate, endDate);
     }
 
     const filteredSummaryQuery = `
@@ -195,19 +206,11 @@ const getDailyServiceReport = async (req, res) => {
             COALESCE(SUM("originalPrice"), 0) as "totalCost"
         FROM daily_services WHERE "userId" = ? ${dateFilterClause}`;
     const filteredSummaryPromise = dbGet(req.db, filteredSummaryQuery, [
-      ...filteredQueryParams,
+      adminId,
+      ...dateParams,
     ]);
 
-    const byTypeQuery = `
-        SELECT type, COUNT(*) as "count",
-               COALESCE(SUM("originalPrice"), 0) as "totalOriginalPrice",
-               COALESCE(SUM("totalPrice"), 0) as "totalSalePrice",
-               COALESCE(SUM(commission), 0) as "totalCommission",
-               COALESCE(SUM(profit), 0) as "totalProfit"
-        FROM daily_services WHERE "userId" = ? ${dateFilterClause}
-        GROUP BY type ORDER BY type`;
-    const byTypePromise = dbAll(req.db, byTypeQuery, [...filteredQueryParams]);
-
+    // Await all promises
     const [lifetimeSummary, monthlyTrend, dateFilteredSummary, byType] =
       await Promise.all([
         lifetimeSummaryPromise,
@@ -216,6 +219,7 @@ const getDailyServiceReport = async (req, res) => {
         byTypePromise,
       ]);
 
+    // Send response
     res.json({
       lifetimeSummary,
       dateFilteredSummary,

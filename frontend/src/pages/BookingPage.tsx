@@ -204,6 +204,15 @@ export default function BookingPage() {
     enabled: !!programId,
   });
 
+  const invalidateAllQueries = () => {
+    queryClient.invalidateQueries({ queryKey: ["bookingsByProgram"] });
+    queryClient.invalidateQueries({ queryKey: ["dashboardStats"] });
+    queryClient.invalidateQueries({ queryKey: ["profitReport"] });
+    queryClient.invalidateQueries({ queryKey: ["programsForBooking"] });
+    queryClient.invalidateQueries({ queryKey: ["programsWithPricing"] });
+    queryClient.invalidateQueries({ queryKey: ["programs"] });
+  };
+
   const { mutate: createBooking } = useMutation({
     mutationFn: (data: {
       bookingData: BookingFormData;
@@ -214,7 +223,7 @@ export default function BookingPage() {
         advancePayments: data.initialPayments,
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: bookingQueryKey });
+      invalidateAllQueries();
       toast.success("Booking created!");
       dispatch({ type: "CLOSE_BOOKING_MODAL" });
     },
@@ -233,7 +242,7 @@ export default function BookingPage() {
         advancePayments: data.initialPayments,
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: bookingQueryKey });
+      invalidateAllQueries();
       toast.success("Booking updated!");
       dispatch({ type: "CLOSE_BOOKING_MODAL" });
     },
@@ -244,7 +253,7 @@ export default function BookingPage() {
   const { mutate: deleteBooking } = useMutation({
     mutationFn: (id: number) => api.deleteBooking(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: bookingQueryKey });
+      invalidateAllQueries();
       toast.success("Booking deleted!");
     },
     onError: (error: Error) =>
@@ -257,7 +266,7 @@ export default function BookingPage() {
       payment: Omit<Payment, "_id" | "id">;
     }) => api.addPayment(data.bookingId, data.payment),
     onSuccess: (updatedBooking) => {
-      queryClient.invalidateQueries({ queryKey: bookingQueryKey });
+      invalidateAllQueries();
       dispatch({ type: "SET_SELECTED_FOR_PAYMENT", payload: updatedBooking });
       toast.success("Payment added!");
     },
@@ -272,7 +281,7 @@ export default function BookingPage() {
       payment: Omit<Payment, "_id" | "id">;
     }) => api.updatePayment(data.bookingId, data.paymentId, data.payment),
     onSuccess: (updatedBooking) => {
-      queryClient.invalidateQueries({ queryKey: bookingQueryKey });
+      invalidateAllQueries();
       dispatch({ type: "SET_SELECTED_FOR_PAYMENT", payload: updatedBooking });
       toast.success("Payment updated!");
     },
@@ -284,7 +293,7 @@ export default function BookingPage() {
     mutationFn: (data: { bookingId: number; paymentId: string }) =>
       api.deletePayment(data.bookingId, data.paymentId),
     onSuccess: (updatedBooking) => {
-      queryClient.invalidateQueries({ queryKey: bookingQueryKey });
+      invalidateAllQueries();
       dispatch({ type: "SET_SELECTED_FOR_PAYMENT", payload: updatedBooking });
       toast.success("Payment deleted!");
     },
@@ -295,7 +304,7 @@ export default function BookingPage() {
   const { mutate: importBookings, isPending: isImporting } = useMutation({
     mutationFn: (file: File) => api.importBookings(file, programId!),
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: bookingQueryKey });
+      invalidateAllQueries();
       toast.success(result.message);
     },
     onError: (error: Error) => toast.error(error.message || "Import failed."),

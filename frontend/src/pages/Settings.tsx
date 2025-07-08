@@ -6,11 +6,18 @@ import * as api from "../services/api";
 import { FacturationSettings } from "../context/models";
 import { toast } from "react-hot-toast";
 import { Save } from "lucide-react";
+import { useAuthContext } from "../context/AuthContext";
 
 export default function Settings() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [settings, setSettings] = useState<FacturationSettings>({});
+  const { state: authState, dispatch } = useAuthContext();
+
+  const [facturationSettings, setFacturationSettings] =
+    useState<FacturationSettings>({});
+  const [agencyName, setAgencyName] = useState(
+    authState.user?.agencyName || ""
+  );
 
   const { data: initialSettings, isLoading } = useQuery<FacturationSettings>({
     queryKey: ["settings"],
@@ -19,14 +26,24 @@ export default function Settings() {
 
   useEffect(() => {
     if (initialSettings) {
-      setSettings(initialSettings);
+      setFacturationSettings(initialSettings);
     }
-  }, [initialSettings]);
+    if (authState.user?.agencyName) {
+      setAgencyName(authState.user.agencyName);
+    }
+  }, [initialSettings, authState.user?.agencyName]);
 
   const { mutate: updateSettings, isPending } = useMutation({
-    mutationFn: (data: FacturationSettings) => api.updateSettings(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries();
+    mutationFn: (data: {
+      agencyName: string;
+      facturationSettings: FacturationSettings;
+    }) => api.updateSettings(data),
+    onSuccess: (updatedData) => {
+      queryClient.invalidateQueries({ queryKey: ["settings"] });
+      dispatch({
+        type: "UPDATE_USER_DETAILS",
+        payload: { agencyName: updatedData.agencyName },
+      });
       toast.success("Settings saved successfully!");
     },
     onError: (error: Error) => {
@@ -34,14 +51,14 @@ export default function Settings() {
     },
   });
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFacturationChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setSettings((prev) => ({ ...prev, [name]: value }));
+    setFacturationSettings((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    updateSettings(settings);
+    updateSettings({ agencyName, facturationSettings });
   };
 
   if (isLoading) {
@@ -69,6 +86,21 @@ export default function Settings() {
           <h3 className="text-lg font-medium text-gray-700 border-b pb-2">
             {t("companyInfo")}
           </h3>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-600">
+              Agency Name
+            </label>
+            <input
+              type="text"
+              name="agencyName"
+              value={agencyName}
+              onChange={(e) => setAgencyName(e.target.value)}
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-600">
@@ -77,8 +109,8 @@ export default function Settings() {
               <input
                 type="text"
                 name="ice"
-                value={settings.ice || ""}
-                onChange={handleChange}
+                value={facturationSettings.ice || ""}
+                onChange={handleFacturationChange}
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
@@ -89,8 +121,8 @@ export default function Settings() {
               <input
                 type="text"
                 name="if"
-                value={settings.if || ""}
-                onChange={handleChange}
+                value={facturationSettings.if || ""}
+                onChange={handleFacturationChange}
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
@@ -101,8 +133,8 @@ export default function Settings() {
               <input
                 type="text"
                 name="rc"
-                value={settings.rc || ""}
-                onChange={handleChange}
+                value={facturationSettings.rc || ""}
+                onChange={handleFacturationChange}
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
@@ -113,8 +145,8 @@ export default function Settings() {
               <input
                 type="text"
                 name="patente"
-                value={settings.patente || ""}
-                onChange={handleChange}
+                value={facturationSettings.patente || ""}
+                onChange={handleFacturationChange}
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
@@ -125,8 +157,8 @@ export default function Settings() {
               <input
                 type="text"
                 name="cnss"
-                value={settings.cnss || ""}
-                onChange={handleChange}
+                value={facturationSettings.cnss || ""}
+                onChange={handleFacturationChange}
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
@@ -139,8 +171,8 @@ export default function Settings() {
               <input
                 type="text"
                 name="address"
-                value={settings.address || ""}
-                onChange={handleChange}
+                value={facturationSettings.address || ""}
+                onChange={handleFacturationChange}
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
@@ -151,8 +183,8 @@ export default function Settings() {
               <input
                 type="text"
                 name="phone"
-                value={settings.phone || ""}
-                onChange={handleChange}
+                value={facturationSettings.phone || ""}
+                onChange={handleFacturationChange}
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
@@ -163,8 +195,8 @@ export default function Settings() {
               <input
                 type="email"
                 name="email"
-                value={settings.email || ""}
-                onChange={handleChange}
+                value={facturationSettings.email || ""}
+                onChange={handleFacturationChange}
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
@@ -181,8 +213,8 @@ export default function Settings() {
               <input
                 type="text"
                 name="bankName"
-                value={settings.bankName || ""}
-                onChange={handleChange}
+                value={facturationSettings.bankName || ""}
+                onChange={handleFacturationChange}
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
@@ -193,8 +225,8 @@ export default function Settings() {
               <input
                 type="text"
                 name="rib"
-                value={settings.rib || ""}
-                onChange={handleChange}
+                value={facturationSettings.rib || ""}
+                onChange={handleFacturationChange}
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               />
             </div>

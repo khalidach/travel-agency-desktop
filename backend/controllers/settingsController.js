@@ -1,24 +1,41 @@
 // backend/controllers/settingsController.js
 
+const dbRun = (db, sql, params = []) =>
+  new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) {
+      err ? reject(err) : resolve(this);
+    });
+  });
+
 const getSettings = async (req, res) => {
-  // The settings are already attached to req.user via authMiddleware
+  // The settings are already attached to req.user via authMiddleware and parsed
   res.json(req.user.facturationSettings || {});
 };
 
 const updateSettings = async (req, res) => {
   try {
     const { id } = req.user;
-    const settings = req.body;
+    const { agencyName, facturationSettings } = req.body;
 
-    const { rows } = await req.db.query(
-      'UPDATE users SET "facturationSettings" = $1 WHERE id = $2 RETURNING "facturationSettings"',
-      [JSON.stringify(settings), id]
+    if (typeof agencyName !== "string" || agencyName.trim() === "") {
+      return res.status(400).json({ message: "Agency name cannot be empty." });
+    }
+
+    const result = await dbRun(
+      req.db,
+      'UPDATE users SET "agencyName" = ?, "facturationSettings" = ? WHERE id = ?',
+      [agencyName.trim(), JSON.stringify(facturationSettings), id]
     );
 
-    if (rows.length === 0) {
+    if (result.changes === 0) {
       return res.status(404).json({ message: "User not found." });
     }
-    res.json(rows[0].facturationSettings);
+
+    // Return the updated data so the frontend can update its state
+    res.json({
+      agencyName: agencyName.trim(),
+      facturationSettings: facturationSettings,
+    });
   } catch (error) {
     console.error("Update Settings Error:", error);
     res.status(500).json({ message: "Failed to update settings." });

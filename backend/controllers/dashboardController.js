@@ -28,14 +28,6 @@ const getDashboardStats = async (req, res) => {
     dateString && !isNaN(new Date(dateString));
 
   try {
-    let dateFilterClause = "";
-    const queryParams = [adminId];
-    if (isValidDate(startDate) && isValidDate(endDate)) {
-      queryParams.push(startDate, endDate);
-      // SQLite uses JULIANDAY for date comparisons
-      dateFilterClause = `AND JULIANDAY(b."createdAt") BETWEEN JULIANDAY(?) AND JULIANDAY(?)`;
-    }
-
     const statsQuery = `
       SELECT
         (SELECT COUNT(*) FROM programs WHERE "userId" = ?) as "activePrograms",
@@ -50,24 +42,29 @@ const getDashboardStats = async (req, res) => {
       adminId,
     ]);
 
+    let dateFilterClause = "";
+    const dateParams = [];
+    if (isValidDate(startDate) && isValidDate(endDate)) {
+      // Use date() function for comparison to ignore time part
+      dateFilterClause = `AND date("createdAt") BETWEEN date(?) AND date(?)`;
+      dateParams.push(startDate, endDate);
+    }
+
     const filteredStatsQuery = `
         SELECT
             COUNT(*) as "filteredBookingsCount",
-            COALESCE(SUM(b."sellingPrice"), 0) as "filteredRevenue",
-            COALESCE(SUM(b.profit), 0) as "filteredProfit",
-            COALESCE(SUM(b."basePrice"), 0) as "filteredCost",
-            COALESCE(SUM(b."sellingPrice" - b."remainingBalance"), 0) as "filteredPaid",
-            (SELECT COUNT(*) FROM bookings WHERE "userId" = ? AND "isFullyPaid" = 1) as "fullyPaid",
-            (SELECT COUNT(*) FROM bookings WHERE "userId" = ? AND "isFullyPaid" = 0) as "pending"
-        FROM bookings b
-        WHERE b."userId" = ? ${dateFilterClause.replace(/\?/g, () =>
-          queryParams.length > 1 ? `?` : ""
-        )}
+            COALESCE(SUM("sellingPrice"), 0) as "filteredRevenue",
+            COALESCE(SUM(profit), 0) as "filteredProfit",
+            COALESCE(SUM("basePrice"), 0) as "filteredCost",
+            COALESCE(SUM("sellingPrice" - "remainingBalance"), 0) as "filteredPaid",
+            SUM(CASE WHEN "isFullyPaid" = 1 THEN 1 ELSE 0 END) as "fullyPaid",
+            SUM(CASE WHEN "isFullyPaid" = 0 THEN 1 ELSE 0 END) as "pending"
+        FROM bookings
+        WHERE "userId" = ? ${dateFilterClause}
     `;
     const filteredStatsPromise = dbGet(req.db, filteredStatsQuery, [
       adminId,
-      adminId,
-      ...queryParams,
+      ...dateParams,
     ]);
 
     const programTypePromise = dbAll(
@@ -144,8 +141,66 @@ const getDashboardStats = async (req, res) => {
 };
 
 const getProfitReport = async (req, res) => {
-  // This function will be updated in a later step
-  res.json({ profitData: [], monthlyTrend: [] });
+  const { adminId } = req.user;
+  const { programType } = req.query;
+
+  try {
+    let programFilterClause = "";
+    const queryParams = [adminId];
+
+    if (programType && programType !== "all") {
+      programFilterClause = `AND p.type = ?`;
+      queryParams.push(programType);
+    }
+
+    const profitDataQuery = `
+        SELECT
+            p.id,
+            p.name as "programName",
+            p.type,
+            COUNT(b.id) as bookings,
+            COALESCE(SUM(b."sellingPrice"), 0) as "totalSales",
+            COALESCE(SUM(b."basePrice"), 0) as "totalCost",
+            COALESCE(SUM(b.profit), 0) as "totalProfit",
+            CASE
+                WHEN SUM(b."sellingPrice") > 0 THEN (SUM(b.profit) * 100.0 / SUM(b."sellingPrice"))
+                ELSE 0
+            END as "profitMargin"
+        FROM programs p
+        LEFT JOIN bookings b ON p.id = b."tripId"
+        WHERE p."userId" = ? ${programFilterClause}
+        GROUP BY p.id, p.name, p.type
+        ORDER BY "totalProfit" DESC;
+    `;
+    const profitDataPromise = dbAll(req.db, profitDataQuery, queryParams);
+
+    const monthlyTrendQuery = `
+        SELECT
+            strftime('%Y-%m', b."createdAt") as month,
+            COALESCE(SUM(b.profit), 0) as profit
+        FROM bookings b
+        JOIN programs p ON b."tripId" = p.id
+        WHERE b."userId" = ? ${programFilterClause.replace(
+          /p\.type/g,
+          "p.type"
+        )}
+        GROUP BY month
+        ORDER BY month ASC;
+    `;
+    const monthlyTrendPromise = dbAll(req.db, monthlyTrendQuery, queryParams);
+
+    const [profitData, monthlyTrend] = await Promise.all([
+      profitDataPromise,
+      monthlyTrendPromise,
+    ]);
+
+    res.json({ profitData, monthlyTrend });
+  } catch (error) {
+    console.error("Profit Report Error:", error);
+    res
+      .status(500)
+      .json({ message: "Server error while fetching profit report." });
+  }
 };
 
 module.exports = {

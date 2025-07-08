@@ -11,6 +11,11 @@
   "keywords": [],
   "author": "Your Name",
   "license": "ISC",
+  "dependencies": {
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  },
   "devDependencies": {
     "electron": "^28.3.3",
     "electron-builder": "^24.13.3"
@@ -29,8 +34,7 @@
       "output": "release"
     },
     "win": {
-      "target": "nsis",
-      "verifyUpdateCodeSignature": false
+      "target": "nsis"
     },
     "mac": {
       "target": "dmg"

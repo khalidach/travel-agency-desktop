@@ -23,11 +23,17 @@
   "build": {
     "appId": "com.travelagency.desktop",
     "productName": "TravelPro System",
+    "asar": true,
     "files": [
       "main.js",
-      "backend/**/*",
-      "frontend/dist/**/*",
-      "node_modules/**/*"
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      },
+      "frontend/dist/**/*"
     ],
     "directories": {
       "buildResources": "assets",

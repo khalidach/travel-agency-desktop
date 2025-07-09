@@ -2,46 +2,8 @@
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 
-// Helper to safely parse JSON from the database
-const safeJsonParse = (data) => {
-  if (typeof data === "string") {
-    try {
-      return JSON.parse(data);
-    } catch (e) {
-      return null;
-    }
-  }
-  return data;
-};
-
-// Helper function to run a SQL command and return a promise
-const dbRun = (db, sql, params = []) => {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(this);
-      }
-    });
-  });
-};
-
-// Helper function to get a single row
-const dbGet = (db, sql, params = []) => {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(row);
-      }
-    });
-  });
-};
-
+// Helper to generate JWT
 const generateToken = (id, role, adminId) => {
-  // Removed tierId from token generation
   return jwt.sign(
     { id, role, adminId },
     process.env.JWT_SECRET || "your_jwt_secret",
@@ -52,34 +14,29 @@ const generateToken = (id, role, adminId) => {
 };
 
 // This function now acts as an "auto-login" or "get default user"
-const loginUser = async (req, res) => {
+const loginUser = (req, res) => {
   try {
     const db = req.db;
 
-    // 1. Check if an admin user already exists.
-    let user = await dbGet(
-      db,
-      `SELECT * FROM users WHERE role = 'admin' LIMIT 1`
-    );
+    // 1. Check if an admin user already exists using the correct better-sqlite3 API.
+    let user = db
+      .prepare(`SELECT * FROM users WHERE role = 'admin' LIMIT 1`)
+      .get();
 
     // 2. If no admin exists, create one.
     if (!user) {
       console.log("No admin user found, creating a default one...");
-      const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash("password123", salt);
+      const salt = bcrypt.genSaltSync(10);
+      const hashedPassword = bcrypt.hashSync("password123", salt);
 
-      // Removed tierId from the INSERT statement
-      await dbRun(
-        db,
-        `INSERT INTO users (username, password, "agencyName", role, "activeUser") VALUES (?, ?, ?, ?, ?)`,
-        ["admin", hashedPassword, "My Travel Agency", "admin", 1]
-      );
+      db.prepare(
+        `INSERT INTO users (username, password, "agencyName", role, "activeUser") VALUES (?, ?, ?, ?, ?)`
+      ).run("admin", hashedPassword, "My Travel Agency", "admin", 1);
 
       // Fetch the newly created admin
-      user = await dbGet(
-        db,
-        `SELECT * FROM users WHERE role = 'admin' LIMIT 1`
-      );
+      user = db
+        .prepare(`SELECT * FROM users WHERE role = 'admin' LIMIT 1`)
+        .get();
     }
 
     if (!user) {
@@ -88,14 +45,13 @@ const loginUser = async (req, res) => {
         .json({ message: "Default user could not be found or created." });
     }
 
-    // 3. Return the user data and a token. No need to join with tiers table.
+    // 3. Return the user data and a token.
     res.json({
       id: user.id,
       username: user.username,
       agencyName: user.agencyName,
       role: user.role,
       activeUser: user.activeUser,
-      // Removed tierId, limits, and tierLimits from the response
       token: generateToken(user.id, user.role, user.id),
     });
   } catch (error) {
@@ -104,8 +60,7 @@ const loginUser = async (req, res) => {
   }
 };
 
-const refreshToken = async (req, res) => {
-  // Simplified refresh logic without tiers/limits
+const refreshToken = (req, res) => {
   const { id, role, adminId, agencyName } = req.user;
   res.json({
     id,

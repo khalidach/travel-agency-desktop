@@ -1,22 +1,5 @@
 // backend/services/BookingService.js
-
-// --- Database Helper Functions ---
-const dbAll = (db, sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
-  });
-const dbGet = (db, sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
-  });
-const dbRun = (db, sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      err ? reject(err) : resolve(this);
-    });
-  });
-
-const calculateBasePrice = async (
+const calculateBasePrice = (
   db,
   userId,
   tripId,
@@ -24,19 +7,17 @@ const calculateBasePrice = async (
   selectedHotel,
   personType
 ) => {
-  const program = await dbGet(
-    db,
-    'SELECT * FROM programs WHERE id = ? AND "userId" = ?',
-    [tripId, userId]
+  const programStmt = db.prepare(
+    'SELECT * FROM programs WHERE id = ? AND "userId" = ?'
   );
+  const program = programStmt.get(tripId, userId);
   if (!program)
     throw new Error("Program not found for base price calculation.");
 
-  const pricing = await dbGet(
-    db,
-    'SELECT * FROM program_pricing WHERE "programId" = ? AND "userId" = ?',
-    [tripId, userId]
+  const pricingStmt = db.prepare(
+    'SELECT * FROM program_pricing WHERE "programId" = ? AND "userId" = ?'
   );
+  const pricing = pricingStmt.get(tripId, userId);
   if (!pricing) return 0;
 
   const parsedProgram = {
@@ -111,25 +92,8 @@ const calculateBasePrice = async (
   return Math.round(nonHotelCosts + hotelCosts);
 };
 
-// This function now uses db.serialize to ensure the operations run in order (like a transaction)
-const runInTransaction = (db, callback) => {
-  return new Promise((resolve, reject) => {
-    db.serialize(async () => {
-      try {
-        await dbRun(db, "BEGIN");
-        const result = await callback();
-        await dbRun(db, "COMMIT");
-        resolve(result);
-      } catch (error) {
-        await dbRun(db, "ROLLBACK");
-        reject(error);
-      }
-    });
-  });
-};
-
-const createBooking = async (db, user, bookingData) => {
-  return runInTransaction(db, async () => {
+const createBooking = (db, user, bookingData) => {
+  const createTransaction = db.transaction(() => {
     const { adminId } = user;
     const {
       clientNameAr,
@@ -145,20 +109,18 @@ const createBooking = async (db, user, bookingData) => {
       relatedPersons,
     } = bookingData;
 
-    const existingBooking = await dbGet(
-      db,
-      'SELECT id FROM bookings WHERE "passportNumber" = ? AND "tripId" = ? AND "userId" = ?',
-      [passportNumber, tripId, adminId]
-    );
+    const existingBooking = db
+      .prepare(
+        'SELECT id FROM bookings WHERE "passportNumber" = ? AND "tripId" = ? AND "userId" = ?'
+      )
+      .get(passportNumber, tripId, adminId);
     if (existingBooking) {
       throw new Error("This person is already booked for this program.");
     }
 
-    const program = await dbGet(
-      db,
-      'SELECT packages FROM programs WHERE id = ? AND "userId" = ?',
-      [tripId, adminId]
-    );
+    const program = db
+      .prepare('SELECT packages FROM programs WHERE id = ? AND "userId" = ?')
+      .get(tripId, adminId);
     if (!program) throw new Error("Program not found.");
 
     const parsedPackages = JSON.parse(program.packages || "[]");
@@ -166,7 +128,7 @@ const createBooking = async (db, user, bookingData) => {
       throw new Error("A package must be selected for this program.");
     }
 
-    const basePrice = await calculateBasePrice(
+    const basePrice = calculateBasePrice(
       db,
       adminId,
       tripId,
@@ -181,38 +143,41 @@ const createBooking = async (db, user, bookingData) => {
     );
     const remainingBalance = sellingPrice - totalPaid;
     const isFullyPaid = remainingBalance <= 0;
-    const employeeId = null; // No employees in desktop version
+    const employeeId = null;
 
     const sql =
       'INSERT INTO bookings ("userId", "employeeId", "clientNameAr", "clientNameFr", "personType", "phoneNumber", "passportNumber", "tripId", "packageId", "selectedHotel", "sellingPrice", "basePrice", profit, "advancePayments", "remainingBalance", "isFullyPaid", "relatedPersons") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-    const result = await dbRun(db, sql, [
-      adminId,
-      employeeId,
-      clientNameAr,
-      clientNameFr,
-      personType,
-      phoneNumber,
-      passportNumber,
-      tripId,
-      packageId,
-      JSON.stringify(selectedHotel),
-      sellingPrice,
-      basePrice,
-      profit,
-      JSON.stringify(advancePayments || []),
-      remainingBalance,
-      isFullyPaid ? 1 : 0,
-      JSON.stringify(relatedPersons || []),
-    ]);
+    const result = db
+      .prepare(sql)
+      .run(
+        adminId,
+        employeeId,
+        clientNameAr,
+        clientNameFr,
+        personType,
+        phoneNumber,
+        passportNumber,
+        tripId,
+        packageId,
+        JSON.stringify(selectedHotel),
+        sellingPrice,
+        basePrice,
+        profit,
+        JSON.stringify(advancePayments || []),
+        remainingBalance,
+        isFullyPaid ? 1 : 0,
+        JSON.stringify(relatedPersons || [])
+      );
 
-    await dbRun(
-      db,
-      'UPDATE programs SET "totalBookings" = "totalBookings" + 1 WHERE id = ?',
-      [tripId]
-    );
+    db.prepare(
+      'UPDATE programs SET "totalBookings" = "totalBookings" + 1 WHERE id = ?'
+    ).run(tripId);
 
-    return dbGet(db, "SELECT * FROM bookings WHERE id = ?", [result.lastID]);
+    return db
+      .prepare("SELECT * FROM bookings WHERE id = ?")
+      .get(result.lastInsertRowid);
   });
+  return createTransaction();
 };
 
 module.exports = {

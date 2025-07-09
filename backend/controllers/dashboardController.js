@@ -1,26 +1,6 @@
 // backend/controllers/dashboardController.js
 
-// Helper to run a query and get all results
-const dbAll = (db, sql, params = []) => {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
-};
-
-// Helper to get a single row
-const dbGet = (db, sql, params = []) => {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) reject(err);
-      else resolve(row);
-    });
-  });
-};
-
-const getDashboardStats = async (req, res) => {
+const getDashboardStats = (req, res) => {
   const { adminId } = req.user;
   const { startDate, endDate } = req.query;
 
@@ -30,24 +10,19 @@ const getDashboardStats = async (req, res) => {
   try {
     const statsQuery = `
       SELECT
-        (SELECT COUNT(*) FROM programs WHERE "userId" = ?) as "activePrograms",
-        (SELECT COUNT(*) FROM bookings WHERE "userId" = ?) as "allTimeBookings",
-        (SELECT COALESCE(SUM("sellingPrice"), 0) FROM bookings WHERE "userId" = ?) as "allTimeRevenue",
-        (SELECT COALESCE(SUM(profit), 0) FROM bookings WHERE "userId" = ?) as "allTimeProfit"
+        (SELECT COUNT(*) FROM programs WHERE "userId" = :adminId) as "activePrograms",
+        (SELECT COUNT(*) FROM bookings WHERE "userId" = :adminId) as "allTimeBookings",
+        (SELECT COALESCE(SUM("sellingPrice"), 0) FROM bookings WHERE "userId" = :adminId) as "allTimeRevenue",
+        (SELECT COALESCE(SUM(profit), 0) FROM bookings WHERE "userId" = :adminId) as "allTimeProfit"
     `;
-    const statsPromise = dbGet(req.db, statsQuery, [
-      adminId,
-      adminId,
-      adminId,
-      adminId,
-    ]);
+    const stats = req.db.prepare(statsQuery).get({ adminId });
 
     let dateFilterClause = "";
-    const dateParams = [];
+    const dateParams = { adminId };
     if (isValidDate(startDate) && isValidDate(endDate)) {
-      // Use date() function for comparison to ignore time part
-      dateFilterClause = `AND date("createdAt") BETWEEN date(?) AND date(?)`;
-      dateParams.push(startDate, endDate);
+      dateFilterClause = `AND date("createdAt") BETWEEN date(:startDate) AND date(:endDate)`;
+      dateParams.startDate = startDate;
+      dateParams.endDate = endDate;
     }
 
     const filteredStatsQuery = `
@@ -60,44 +35,27 @@ const getDashboardStats = async (req, res) => {
             SUM(CASE WHEN "isFullyPaid" = 1 THEN 1 ELSE 0 END) as "fullyPaid",
             SUM(CASE WHEN "isFullyPaid" = 0 THEN 1 ELSE 0 END) as "pending"
         FROM bookings
-        WHERE "userId" = ? ${dateFilterClause}
+        WHERE "userId" = :adminId ${dateFilterClause}
     `;
-    const filteredStatsPromise = dbGet(req.db, filteredStatsQuery, [
-      adminId,
-      ...dateParams,
-    ]);
+    const filteredStats = req.db.prepare(filteredStatsQuery).get(dateParams);
 
-    const programTypePromise = dbAll(
-      req.db,
-      `SELECT type, COUNT(*) as count FROM programs WHERE "userId" = ? GROUP BY type`,
-      [adminId]
-    );
+    const programTypes = req.db
+      .prepare(
+        `SELECT type, COUNT(*) as count FROM programs WHERE "userId" = ? GROUP BY type`
+      )
+      .all(adminId);
 
-    const recentBookingsPromise = dbAll(
-      req.db,
-      `SELECT id, "clientNameFr", "passportNumber", "sellingPrice", "isFullyPaid" FROM bookings WHERE "userId" = ? ORDER BY "createdAt" DESC LIMIT 3`,
-      [adminId]
-    );
+    const recentBookings = req.db
+      .prepare(
+        `SELECT id, "clientNameFr", "passportNumber", "sellingPrice", "isFullyPaid" FROM bookings WHERE "userId" = ? ORDER BY "createdAt" DESC LIMIT 3`
+      )
+      .all(adminId);
 
-    const dailyServiceProfitPromise = dbAll(
-      req.db,
-      `SELECT type, COALESCE(SUM(profit), 0) as "totalProfit" FROM daily_services WHERE "userId" = ? GROUP BY type`,
-      [adminId]
-    );
-
-    const [
-      stats,
-      filteredStats,
-      programTypes,
-      recentBookings,
-      dailyServiceProfits,
-    ] = await Promise.all([
-      statsPromise,
-      filteredStatsPromise,
-      programTypePromise,
-      recentBookingsPromise,
-      dailyServiceProfitPromise,
-    ]);
+    const dailyServiceProfits = req.db
+      .prepare(
+        `SELECT type, COALESCE(SUM(profit), 0) as "totalProfit" FROM daily_services WHERE "userId" = ? GROUP BY type`
+      )
+      .all(adminId);
 
     const filteredRevenue = parseFloat(filteredStats.filteredRevenue);
     const filteredPaid = parseFloat(filteredStats.filteredPaid);
@@ -140,7 +98,7 @@ const getDashboardStats = async (req, res) => {
   }
 };
 
-const getProfitReport = async (req, res) => {
+const getProfitReport = (req, res) => {
   const { adminId } = req.user;
   const { programType } = req.query;
 
@@ -172,7 +130,7 @@ const getProfitReport = async (req, res) => {
         GROUP BY p.id, p.name, p.type
         ORDER BY "totalProfit" DESC;
     `;
-    const profitDataPromise = dbAll(req.db, profitDataQuery, queryParams);
+    const profitData = req.db.prepare(profitDataQuery).all(...queryParams);
 
     const monthlyTrendQuery = `
         SELECT
@@ -180,19 +138,11 @@ const getProfitReport = async (req, res) => {
             COALESCE(SUM(b.profit), 0) as profit
         FROM bookings b
         JOIN programs p ON b."tripId" = p.id
-        WHERE b."userId" = ? ${programFilterClause.replace(
-          /p\.type/g,
-          "p.type"
-        )}
+        WHERE b."userId" = ? ${programFilterClause}
         GROUP BY month
         ORDER BY month ASC;
     `;
-    const monthlyTrendPromise = dbAll(req.db, monthlyTrendQuery, queryParams);
-
-    const [profitData, monthlyTrend] = await Promise.all([
-      profitDataPromise,
-      monthlyTrendPromise,
-    ]);
+    const monthlyTrend = req.db.prepare(monthlyTrendQuery).all(...queryParams);
 
     res.json({ profitData, monthlyTrend });
   } catch (error) {

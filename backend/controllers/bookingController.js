@@ -2,49 +2,30 @@
 const BookingService = require("../services/BookingService");
 const ExcelService = require("../services/ExcelService");
 
-// --- Database Helper Functions ---
-const dbAll = (db, sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
-  });
-const dbGet = (db, sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
-  });
-const dbRun = (db, sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      err ? reject(err) : resolve(this);
-    });
-  });
-
-const findBookingForUser = async (db, user, bookingId) => {
-  const booking = await dbGet(
-    db,
-    'SELECT * FROM bookings WHERE id = ? AND "userId" = ?',
-    [bookingId, user.adminId]
+const findBookingForUser = (db, user, bookingId) => {
+  const stmt = db.prepare(
+    'SELECT * FROM bookings WHERE id = ? AND "userId" = ?'
   );
+  const booking = stmt.get(bookingId, user.adminId);
   if (!booking) throw new Error("Booking not found or not authorized");
   return booking;
 };
 
-exports.getAllBookings = async (req, res) => {
+exports.getAllBookings = (req, res) => {
   try {
     const { adminId } = req.user;
     const page = parseInt(req.query.page || "1", 10);
     const limit = parseInt(req.query.limit || "10", 10);
     const offset = (page - 1) * limit;
 
-    const bookings = await dbAll(
-      req.db,
-      `SELECT * FROM bookings WHERE "userId" = ? ORDER BY "createdAt" DESC LIMIT ? OFFSET ?`,
-      [adminId, limit, offset]
+    const bookingsStmt = req.db.prepare(
+      `SELECT * FROM bookings WHERE "userId" = ? ORDER BY "createdAt" DESC LIMIT ? OFFSET ?`
     );
-    const totalResult = await dbGet(
-      req.db,
-      `SELECT COUNT(*) as totalCount FROM bookings WHERE "userId" = ?`,
-      [adminId]
-    );
+    const bookings = bookingsStmt.all(adminId, limit, offset);
+
+    const totalResult = req.db
+      .prepare(`SELECT COUNT(*) as totalCount FROM bookings WHERE "userId" = ?`)
+      .get(adminId);
     const totalCount = totalResult.totalCount;
 
     res.json({
@@ -67,7 +48,7 @@ exports.getAllBookings = async (req, res) => {
   }
 };
 
-exports.getBookingsByProgram = async (req, res) => {
+exports.getBookingsByProgram = (req, res) => {
   try {
     const { programId } = req.params;
     const {
@@ -113,11 +94,12 @@ exports.getBookingsByProgram = async (req, res) => {
     const offset = (page - 1) * limit;
 
     const bookingsQuery = `SELECT * FROM bookings b ${whereClause} ${orderByClause} LIMIT ? OFFSET ?`;
-    const bookingsParams = [...queryParams, limit, offset];
-    const bookings = await dbAll(req.db, bookingsQuery, bookingsParams);
+    const bookings = req.db
+      .prepare(bookingsQuery)
+      .all(...queryParams, limit, offset);
 
     const countQuery = `SELECT COUNT(*) as totalCount FROM bookings b ${whereClause}`;
-    const totalResult = await dbGet(req.db, countQuery, queryParams);
+    const totalResult = req.db.prepare(countQuery).get(...queryParams);
     const totalCount = totalResult.totalCount;
 
     const summaryQuery = `
@@ -127,7 +109,7 @@ exports.getBookingsByProgram = async (req, res) => {
                 COALESCE(SUM(profit), 0) as totalProfit,
                 COALESCE(SUM("sellingPrice" - "remainingBalance"), 0) as totalPaid
             FROM bookings b ${whereClause}`;
-    const summaryResult = await dbGet(req.db, summaryQuery, queryParams);
+    const summaryResult = req.db.prepare(summaryQuery).get(...queryParams);
 
     const totalRevenue = summaryResult.totalRevenue;
     const totalPaid = summaryResult.totalPaid;
@@ -160,13 +142,9 @@ exports.getBookingsByProgram = async (req, res) => {
   }
 };
 
-exports.createBooking = async (req, res) => {
+exports.createBooking = (req, res) => {
   try {
-    const newBooking = await BookingService.createBooking(
-      req.db,
-      req.user,
-      req.body
-    );
+    const newBooking = BookingService.createBooking(req.db, req.user, req.body);
     res.status(201).json(newBooking);
   } catch (error) {
     console.error("Create Booking Error:", error);
@@ -174,7 +152,7 @@ exports.createBooking = async (req, res) => {
   }
 };
 
-exports.updateBooking = async (req, res) => {
+exports.updateBooking = (req, res) => {
   const { id } = req.params;
   try {
     const {
@@ -190,14 +168,10 @@ exports.updateBooking = async (req, res) => {
       advancePayments,
       relatedPersons,
     } = req.body;
-    const booking = await dbGet(
-      req.db,
-      'SELECT * FROM bookings WHERE id = ? AND "userId" = ?',
-      [id, req.user.adminId]
-    );
-    if (!booking) throw new Error("Booking not found or not authorized");
 
-    const basePrice = await BookingService.calculateBasePrice(
+    findBookingForUser(req.db, req.user, id);
+
+    const basePrice = BookingService.calculateBasePrice(
       req.db,
       req.user.adminId,
       tripId,
@@ -213,9 +187,10 @@ exports.updateBooking = async (req, res) => {
     const remainingBalance = sellingPrice - totalPaid;
     const isFullyPaid = remainingBalance <= 0;
 
-    const sql =
-      'UPDATE bookings SET "clientNameAr" = ?, "clientNameFr" = ?, "personType" = ?, "phoneNumber" = ?, "passportNumber" = ?, "tripId" = ?, "packageId" = ?, "selectedHotel" = ?, "sellingPrice" = ?, "basePrice" = ?, profit = ?, "advancePayments" = ?, "remainingBalance" = ?, "isFullyPaid" = ?, "relatedPersons" = ? WHERE id = ?';
-    await dbRun(req.db, sql, [
+    const stmt = req.db.prepare(
+      'UPDATE bookings SET "clientNameAr" = ?, "clientNameFr" = ?, "personType" = ?, "phoneNumber" = ?, "passportNumber" = ?, "tripId" = ?, "packageId" = ?, "selectedHotel" = ?, "sellingPrice" = ?, "basePrice" = ?, profit = ?, "advancePayments" = ?, "remainingBalance" = ?, "isFullyPaid" = ?, "relatedPersons" = ? WHERE id = ?'
+    );
+    stmt.run(
       clientNameAr,
       clientNameFr,
       personType,
@@ -231,14 +206,12 @@ exports.updateBooking = async (req, res) => {
       remainingBalance,
       isFullyPaid ? 1 : 0,
       JSON.stringify(relatedPersons || []),
-      id,
-    ]);
-
-    const updatedBooking = await dbGet(
-      req.db,
-      "SELECT * FROM bookings WHERE id = ?",
-      [id]
+      id
     );
+
+    const updatedBooking = req.db
+      .prepare("SELECT * FROM bookings WHERE id = ?")
+      .get(id);
     res.json(updatedBooking);
   } catch (error) {
     console.error("Update Booking Error:", error);
@@ -246,48 +219,36 @@ exports.updateBooking = async (req, res) => {
   }
 };
 
-exports.deleteBooking = async (req, res) => {
+exports.deleteBooking = (req, res) => {
   const { id } = req.params;
   const db = req.db;
   try {
-    db.serialize(async () => {
-      try {
-        await dbRun(db, "BEGIN TRANSACTION");
-        const booking = await dbGet(
-          db,
-          'SELECT "tripId" FROM bookings WHERE id = ? AND "userId" = ?',
-          [id, req.user.adminId]
-        );
-        if (!booking) throw new Error("Booking not found or not authorized");
+    const deleteTransaction = db.transaction(() => {
+      const booking = db
+        .prepare('SELECT "tripId" FROM bookings WHERE id = ? AND "userId" = ?')
+        .get(id, req.user.adminId);
+      if (!booking) throw new Error("Booking not found or not authorized");
 
-        await dbRun(db, "DELETE FROM bookings WHERE id = ?", [id]);
-        if (booking.tripId) {
-          await dbRun(
-            db,
-            'UPDATE programs SET "totalBookings" = "totalBookings" - 1 WHERE id = ? AND "totalBookings" > 0',
-            [booking.tripId]
-          );
-        }
-        await dbRun(db, "COMMIT");
-        res.json({ message: "Booking deleted successfully" });
-      } catch (err) {
-        await dbRun(db, "ROLLBACK");
-        throw err;
+      db.prepare("DELETE FROM bookings WHERE id = ?").run(id);
+      if (booking.tripId) {
+        db.prepare(
+          'UPDATE programs SET "totalBookings" = "totalBookings" - 1 WHERE id = ? AND "totalBookings" > 0'
+        ).run(booking.tripId);
       }
     });
+
+    deleteTransaction();
+    res.json({ message: "Booking deleted successfully" });
   } catch (error) {
     console.error("Delete Booking Error:", error);
     res.status(500).json({ message: error.message });
   }
 };
 
-exports.addPayment = async (req, res) => {
+exports.addPayment = (req, res) => {
   try {
-    const booking = await findBookingForUser(
-      req.db,
-      req.user,
-      req.params.bookingId
-    );
+    const { bookingId } = req.params;
+    const booking = findBookingForUser(req.db, req.user, bookingId);
     const newPayment = { ...req.body, _id: new Date().getTime().toString() };
     const advancePayments = [
       ...JSON.parse(booking.advancePayments || "[]"),
@@ -297,21 +258,17 @@ exports.addPayment = async (req, res) => {
     const remainingBalance = booking.sellingPrice - totalPaid;
     const isFullyPaid = remainingBalance <= 0;
 
-    await dbRun(
-      req.db,
-      'UPDATE bookings SET "advancePayments" = ?, "remainingBalance" = ?, "isFullyPaid" = ? WHERE id = ?',
-      [
+    req.db
+      .prepare(
+        'UPDATE bookings SET "advancePayments" = ?, "remainingBalance" = ?, "isFullyPaid" = ? WHERE id = ?'
+      )
+      .run(
         JSON.stringify(advancePayments),
         remainingBalance,
         isFullyPaid ? 1 : 0,
-        req.params.bookingId,
-      ]
-    );
-    const updatedBooking = await findBookingForUser(
-      req.db,
-      req.user,
-      req.params.bookingId
-    );
+        bookingId
+      );
+    const updatedBooking = findBookingForUser(req.db, req.user, bookingId);
     res.json({
       ...updatedBooking,
       advancePayments: JSON.parse(updatedBooking.advancePayments || "[]"),
@@ -321,36 +278,28 @@ exports.addPayment = async (req, res) => {
   }
 };
 
-exports.updatePayment = async (req, res) => {
+exports.updatePayment = (req, res) => {
   try {
-    const booking = await findBookingForUser(
-      req.db,
-      req.user,
-      req.params.bookingId
-    );
+    const { bookingId, paymentId } = req.params;
+    const booking = findBookingForUser(req.db, req.user, bookingId);
     const advancePayments = JSON.parse(booking.advancePayments || "[]").map(
-      (p) =>
-        p._id === req.params.paymentId ? { ...p, ...req.body, _id: p._id } : p
+      (p) => (p._id === paymentId ? { ...p, ...req.body, _id: p._id } : p)
     );
     const totalPaid = advancePayments.reduce((sum, p) => sum + p.amount, 0);
     const remainingBalance = booking.sellingPrice - totalPaid;
     const isFullyPaid = remainingBalance <= 0;
 
-    await dbRun(
-      req.db,
-      'UPDATE bookings SET "advancePayments" = ?, "remainingBalance" = ?, "isFullyPaid" = ? WHERE id = ?',
-      [
+    req.db
+      .prepare(
+        'UPDATE bookings SET "advancePayments" = ?, "remainingBalance" = ?, "isFullyPaid" = ? WHERE id = ?'
+      )
+      .run(
         JSON.stringify(advancePayments),
         remainingBalance,
         isFullyPaid ? 1 : 0,
-        req.params.bookingId,
-      ]
-    );
-    const updatedBooking = await findBookingForUser(
-      req.db,
-      req.user,
-      req.params.bookingId
-    );
+        bookingId
+      );
+    const updatedBooking = findBookingForUser(req.db, req.user, bookingId);
     res.json({
       ...updatedBooking,
       advancePayments: JSON.parse(updatedBooking.advancePayments || "[]"),
@@ -360,35 +309,28 @@ exports.updatePayment = async (req, res) => {
   }
 };
 
-exports.deletePayment = async (req, res) => {
+exports.deletePayment = (req, res) => {
   try {
-    const booking = await findBookingForUser(
-      req.db,
-      req.user,
-      req.params.bookingId
-    );
+    const { bookingId, paymentId } = req.params;
+    const booking = findBookingForUser(req.db, req.user, bookingId);
     const advancePayments = JSON.parse(booking.advancePayments || "[]").filter(
-      (p) => p._id !== req.params.paymentId
+      (p) => p._id !== paymentId
     );
     const totalPaid = advancePayments.reduce((sum, p) => sum + p.amount, 0);
     const remainingBalance = booking.sellingPrice - totalPaid;
     const isFullyPaid = remainingBalance <= 0;
 
-    await dbRun(
-      req.db,
-      'UPDATE bookings SET "advancePayments" = ?, "remainingBalance" = ?, "isFullyPaid" = ? WHERE id = ?',
-      [
+    req.db
+      .prepare(
+        'UPDATE bookings SET "advancePayments" = ?, "remainingBalance" = ?, "isFullyPaid" = ? WHERE id = ?'
+      )
+      .run(
         JSON.stringify(advancePayments),
         remainingBalance,
         isFullyPaid ? 1 : 0,
-        req.params.bookingId,
-      ]
-    );
-    const updatedBooking = await findBookingForUser(
-      req.db,
-      req.user,
-      req.params.bookingId
-    );
+        bookingId
+      );
+    const updatedBooking = findBookingForUser(req.db, req.user, bookingId);
     res.json({
       ...updatedBooking,
       advancePayments: JSON.parse(updatedBooking.advancePayments || "[]"),
@@ -402,21 +344,19 @@ exports.deletePayment = async (req, res) => {
 exports.exportBookingsToExcel = async (req, res) => {
   try {
     const { programId } = req.params;
-    const { adminId } = req.user;
+    const { adminId, role } = req.user;
 
-    const program = await dbGet(
-      req.db,
-      'SELECT * FROM programs WHERE id = ? AND "userId" = ?',
-      [programId, adminId]
-    );
+    const program = req.db
+      .prepare('SELECT * FROM programs WHERE id = ? AND "userId" = ?')
+      .get(programId, adminId);
     if (!program)
       return res.status(404).json({ message: "Program not found." });
 
-    const bookings = await dbAll(
-      req.db,
-      'SELECT * FROM bookings WHERE "tripId" = ? AND "userId" = ? ORDER BY "createdAt" DESC',
-      [programId, adminId]
-    );
+    const bookings = req.db
+      .prepare(
+        'SELECT * FROM bookings WHERE "tripId" = ? AND "userId" = ? ORDER BY "createdAt" DESC'
+      )
+      .all(programId, adminId);
     if (bookings.length === 0)
       return res
         .status(404)
@@ -431,7 +371,8 @@ exports.exportBookingsToExcel = async (req, res) => {
 
     const workbook = await ExcelService.generateBookingsExcel(
       parsedBookings,
-      program
+      program,
+      role
     );
 
     const fileName = `${(program.name || "Untitled_Program").replace(
@@ -444,8 +385,8 @@ exports.exportBookingsToExcel = async (req, res) => {
     );
     res.setHeader("Content-Disposition", `attachment; filename=${fileName}`);
 
-    await workbook.xlsx.write(res);
-    res.end();
+    const buffer = await workbook.xlsx.writeBuffer();
+    res.send(buffer);
   } catch (error) {
     console.error("Failed to export to Excel:", error);
     if (!res.headersSent) {
@@ -457,11 +398,9 @@ exports.exportBookingsToExcel = async (req, res) => {
 exports.exportBookingTemplateForProgram = async (req, res) => {
   try {
     const { programId } = req.params;
-    const program = await dbGet(
-      req.db,
-      'SELECT * FROM programs WHERE id = ? AND "userId" = ?',
-      [programId, req.user.adminId]
-    );
+    const program = req.db
+      .prepare('SELECT * FROM programs WHERE id = ? AND "userId" = ?')
+      .get(programId, req.user.adminId);
     if (!program)
       return res.status(404).json({ message: "Program not found." });
 
@@ -482,8 +421,8 @@ exports.exportBookingTemplateForProgram = async (req, res) => {
     );
     res.setHeader("Content-Disposition", `attachment; filename=${fileName}`);
 
-    await workbook.xlsx.write(res);
-    res.end();
+    const buffer = await workbook.xlsx.writeBuffer();
+    res.send(buffer);
   } catch (error) {
     console.error("Failed to export template:", error);
     if (!res.headersSent) {

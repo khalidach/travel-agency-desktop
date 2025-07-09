@@ -2,22 +2,6 @@
 const excel = require("exceljs");
 const { calculateBasePrice } = require("./BookingService");
 
-// --- Database Helper Functions ---
-const dbGet = (db, sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
-  });
-const dbAll = (db, sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
-  });
-const dbRun = (db, sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      err ? reject(err) : resolve(this);
-    });
-  });
-
 const sanitizeName = (name) => {
   if (!name) return "";
   let sanitized = name.toString().replace(/\s/g, "_");
@@ -28,7 +12,6 @@ const sanitizeName = (name) => {
 };
 
 exports.generateBookingsExcel = async (bookings, program, userRole) => {
-  // This function is correct and remains unchanged.
   const workbook = new excel.Workbook();
   const worksheet = workbook.addWorksheet("Bookings", {
     views: [{ rightToLeft: false }],
@@ -136,7 +119,7 @@ exports.generateBookingTemplateForProgramExcel = async (program) => {
   templateSheet.columns = headers;
   templateSheet.getRow(1).font = { bold: true };
 
-  // --- Data Validation Logic ---
+  // Data Validation Logic
   const personTypes = ["adult", "child", "infant"];
   validationSheet.getColumn("A").values = ["PersonTypes", ...personTypes];
   workbook.definedNames.add("Lists!$A$2:$A$4", "PersonTypes");
@@ -249,7 +232,6 @@ exports.generateBookingTemplateForProgramExcel = async (program) => {
         const hotelColumn = templateSheet.getColumn(hotelColumnKey);
         const roomTypeColumn = templateSheet.getColumn(h.key);
         if (hotelColumn && roomTypeColumn) {
-          // **FIX**: This is the corrected formula based on your working example.
           const roomFormula = `=INDIRECT(SUBSTITUTE(${hotelColumn.letter}${i}," ","_")&"_Rooms")`;
           templateSheet.getCell(`${roomTypeColumn.letter}${i}`).dataValidation =
             { type: "list", allowBlank: true, formulae: [roomFormula] };
@@ -262,116 +244,108 @@ exports.generateBookingTemplateForProgramExcel = async (program) => {
 };
 
 exports.parseBookingsFromExcel = async (file, user, db, programId) => {
-  // This function remains the same
-  return new Promise((resolve, reject) => {
-    db.serialize(async () => {
-      try {
-        await dbRun(db, "BEGIN TRANSACTION");
-        const workbook = new excel.Workbook();
-        await workbook.xlsx.readFile(file.path);
-        const worksheet = workbook.getWorksheet(1);
+  const parseTransaction = db.transaction(() => {
+    const workbook = new excel.Workbook();
+    // This part must remain async
+    return workbook.xlsx.readFile(file.path).then(() => {
+      const worksheet = workbook.getWorksheet(1);
 
-        const program = await dbGet(
-          db,
-          'SELECT * FROM programs WHERE "userId" = ? AND id = ?',
-          [user.adminId, programId]
-        );
-        if (!program) throw new Error("Program not found.");
-        program.packages = JSON.parse(program.packages || "[]");
-        program.cities = JSON.parse(program.cities || "[]");
+      const program = db
+        .prepare('SELECT * FROM programs WHERE "userId" = ? AND id = ?')
+        .get(user.adminId, programId);
+      if (!program) throw new Error("Program not found.");
+      program.packages = JSON.parse(program.packages || "[]");
+      program.cities = JSON.parse(program.cities || "[]");
 
-        const existingBookings = await dbAll(
-          db,
-          'SELECT "passportNumber" FROM bookings WHERE "userId" = ? AND "tripId" = ?',
-          [user.adminId, programId]
-        );
-        const existingPassportNumbers = new Set(
-          existingBookings.map((b) => b.passportNumber)
-        );
+      const existingBookings = db
+        .prepare(
+          'SELECT "passportNumber" FROM bookings WHERE "userId" = ? AND "tripId" = ?'
+        )
+        .all(user.adminId, programId);
+      const existingPassportNumbers = new Set(
+        existingBookings.map((b) => b.passportNumber)
+      );
 
-        const headerRow = worksheet.getRow(1).values;
-        const headerMap = {};
-        if (Array.isArray(headerRow)) {
-          headerRow.forEach((header, index) => {
-            if (header) headerMap[header.toString()] = index;
-          });
-        }
-
-        let newBookingsCount = 0;
-        for (let i = 2; i <= worksheet.rowCount; i++) {
-          const row = worksheet.getRow(i);
-          const rowData = {};
-          Object.keys(headerMap).forEach((header) => {
-            rowData[header] = row.getCell(headerMap[header]).value;
-          });
-
-          const passportNumber = rowData["Passport Number"];
-          if (!passportNumber || existingPassportNumbers.has(passportNumber))
-            continue;
-
-          const selectedHotel = { cities: [], hotelNames: [], roomTypes: [] };
-          (program.cities || []).forEach((city) => {
-            const hotelName = rowData[`${city.name} Hotel`];
-            const roomType = rowData[`${city.name} Room Type`];
-            if (hotelName && roomType) {
-              selectedHotel.cities.push(city.name);
-              selectedHotel.hotelNames.push(hotelName);
-              selectedHotel.roomTypes.push(roomType);
-            }
-          });
-
-          const basePrice = await calculateBasePrice(
-            db,
-            user.adminId,
-            programId,
-            rowData["Package"],
-            selectedHotel,
-            rowData["Person Type"] || "adult"
-          );
-          const sellingPrice = Number(rowData["Selling Price"]) || 0;
-          const profit = sellingPrice - basePrice;
-
-          const bookingSql =
-            'INSERT INTO bookings ("userId", "employeeId", "clientNameAr", "clientNameFr", "personType", "phoneNumber", "passportNumber", "tripId", "packageId", "selectedHotel", "sellingPrice", "basePrice", profit, "advancePayments", "remainingBalance", "isFullyPaid") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-          await dbRun(db, bookingSql, [
-            user.adminId,
-            null,
-            rowData["Client Name (Arabic)"],
-            rowData["Client Name (French)"],
-            rowData["Person Type"] || "adult",
-            rowData["Phone Number"] || "",
-            passportNumber,
-            programId,
-            rowData["Package"],
-            JSON.stringify(selectedHotel),
-            sellingPrice,
-            basePrice,
-            profit,
-            "[]",
-            sellingPrice,
-            sellingPrice <= 0 ? 1 : 0,
-          ]);
-
-          newBookingsCount++;
-          existingPassportNumbers.add(passportNumber);
-        }
-
-        if (newBookingsCount > 0) {
-          await dbRun(
-            db,
-            'UPDATE programs SET "totalBookings" = "totalBookings" + ? WHERE id = ?',
-            [newBookingsCount, programId]
-          );
-        }
-
-        await dbRun(db, "COMMIT");
-        resolve({
-          message: `Import complete. ${newBookingsCount} new bookings added.`,
+      const headerRow = worksheet.getRow(1).values;
+      const headerMap = {};
+      if (Array.isArray(headerRow)) {
+        headerRow.forEach((header, index) => {
+          if (header) headerMap[header.toString()] = index;
         });
-      } catch (error) {
-        await dbRun(db, "ROLLBACK");
-        reject(error);
       }
+
+      let newBookingsCount = 0;
+      const insertStmt = db.prepare(
+        'INSERT INTO bookings ("userId", "employeeId", "clientNameAr", "clientNameFr", "personType", "phoneNumber", "passportNumber", "tripId", "packageId", "selectedHotel", "sellingPrice", "basePrice", profit, "advancePayments", "remainingBalance", "isFullyPaid") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      );
+
+      for (let i = 2; i <= worksheet.rowCount; i++) {
+        const row = worksheet.getRow(i);
+        const rowData = {};
+        Object.keys(headerMap).forEach((header) => {
+          rowData[header] = row.getCell(headerMap[header]).value;
+        });
+
+        const passportNumber = rowData["Passport Number"];
+        if (!passportNumber || existingPassportNumbers.has(passportNumber))
+          continue;
+
+        const selectedHotel = { cities: [], hotelNames: [], roomTypes: [] };
+        (program.cities || []).forEach((city) => {
+          const hotelName = rowData[`${city.name} Hotel`];
+          const roomType = rowData[`${city.name} Room Type`];
+          if (hotelName && roomType) {
+            selectedHotel.cities.push(city.name);
+            selectedHotel.hotelNames.push(hotelName);
+            selectedHotel.roomTypes.push(roomType);
+          }
+        });
+
+        const basePrice = calculateBasePrice(
+          db,
+          user.adminId,
+          programId,
+          rowData["Package"],
+          selectedHotel,
+          rowData["Person Type"] || "adult"
+        );
+        const sellingPrice = Number(rowData["Selling Price"]) || 0;
+        const profit = sellingPrice - basePrice;
+
+        insertStmt.run(
+          user.adminId,
+          null,
+          rowData["Client Name (Arabic)"],
+          rowData["Client Name (French)"],
+          rowData["Person Type"] || "adult",
+          rowData["Phone Number"] || "",
+          passportNumber,
+          programId,
+          rowData["Package"],
+          JSON.stringify(selectedHotel),
+          sellingPrice,
+          basePrice,
+          profit,
+          "[]",
+          sellingPrice,
+          sellingPrice <= 0 ? 1 : 0
+        );
+
+        newBookingsCount++;
+        existingPassportNumbers.add(passportNumber);
+      }
+
+      if (newBookingsCount > 0) {
+        db.prepare(
+          'UPDATE programs SET "totalBookings" = "totalBookings" + ? WHERE id = ?'
+        ).run(newBookingsCount, programId);
+      }
+
+      return {
+        message: `Import complete. ${newBookingsCount} new bookings added.`,
+      };
     });
   });
+
+  return parseTransaction();
 };

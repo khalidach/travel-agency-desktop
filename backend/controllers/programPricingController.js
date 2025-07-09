@@ -1,37 +1,7 @@
 // backend/controllers/programPricingController.js
 const ProgramPricingService = require("../services/ProgramPricingService");
 
-// Helper to run a query and get all results
-const dbAll = (db, sql, params = []) => {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
-};
-
-// Helper to get a single row
-const dbGet = (db, sql, params = []) => {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) reject(err);
-      else resolve(row);
-    });
-  });
-};
-
-// Helper to run a single command
-const dbRun = (db, sql, params = []) => {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) reject(err);
-      else resolve(this);
-    });
-  });
-};
-
-exports.getAllProgramPricing = async (req, res) => {
+exports.getAllProgramPricing = (req, res) => {
   try {
     const page = parseInt(req.query.page || "1", 10);
     const limit = parseInt(req.query.limit || "10", 10);
@@ -40,22 +10,19 @@ exports.getAllProgramPricing = async (req, res) => {
     const pricingQuery = `
        SELECT pp.*, e.username as "employeeName"
        FROM program_pricing pp
-       LEFT JOIN employees e ON pp."employeeId" = e.id
+       LEFT JOIN users e ON pp."employeeId" = e.id
        WHERE pp."userId" = ?
        ORDER BY pp."createdAt" DESC
        LIMIT ? OFFSET ?`;
+    const pricingResult = req.db
+      .prepare(pricingQuery)
+      .all(req.user.adminId, limit, offset);
 
-    const pricingResult = await dbAll(req.db, pricingQuery, [
-      req.user.adminId,
-      limit,
-      offset,
-    ]);
-
-    const totalCountResult = await dbGet(
-      req.db,
-      'SELECT COUNT(*) as totalCount FROM program_pricing WHERE "userId" = ?',
-      [req.user.adminId]
-    );
+    const totalCountResult = req.db
+      .prepare(
+        'SELECT COUNT(*) as totalCount FROM program_pricing WHERE "userId" = ?'
+      )
+      .get(req.user.adminId);
     const totalCount = totalCountResult.totalCount;
 
     res.json({
@@ -73,21 +40,20 @@ exports.getAllProgramPricing = async (req, res) => {
   }
 };
 
-exports.getProgramPricingByProgramId = async (req, res) => {
+exports.getProgramPricingByProgramId = (req, res) => {
   const { programId } = req.params;
   const { adminId } = req.user;
   try {
-    const pricing = await dbGet(
-      req.db,
-      'SELECT * FROM program_pricing WHERE "programId" = ? AND "userId" = ?',
-      [programId, adminId]
-    );
+    const pricing = req.db
+      .prepare(
+        'SELECT * FROM program_pricing WHERE "programId" = ? AND "userId" = ?'
+      )
+      .get(programId, adminId);
 
     if (!pricing) {
-      return res.json(null); // Return null if no pricing is set up
+      return res.json(null);
     }
 
-    // Parse JSON columns
     pricing.allHotels = JSON.parse(pricing.allHotels || "[]");
     pricing.personTypes = JSON.parse(pricing.personTypes || "[]");
 
@@ -98,9 +64,9 @@ exports.getProgramPricingByProgramId = async (req, res) => {
   }
 };
 
-exports.createProgramPricing = async (req, res) => {
+exports.createProgramPricing = (req, res) => {
   try {
-    const newPricing = await ProgramPricingService.createPricingAndBookings(
+    const newPricing = ProgramPricingService.createPricingAndBookings(
       req.db,
       req.user,
       req.body
@@ -112,11 +78,11 @@ exports.createProgramPricing = async (req, res) => {
   }
 };
 
-exports.updateProgramPricing = async (req, res) => {
+exports.updateProgramPricing = (req, res) => {
   const { id } = req.params;
   try {
     const updatedProgramPricing =
-      await ProgramPricingService.updatePricingAndBookings(
+      ProgramPricingService.updatePricingAndBookings(
         req.db,
         req.user,
         id,
@@ -129,14 +95,14 @@ exports.updateProgramPricing = async (req, res) => {
   }
 };
 
-exports.deleteProgramPricing = async (req, res) => {
+exports.deleteProgramPricing = (req, res) => {
   const { id } = req.params;
   try {
-    const pricing = await dbGet(
-      req.db,
-      'SELECT "employeeId" FROM program_pricing WHERE id = ? AND "userId" = ?',
-      [id, req.user.adminId]
-    );
+    const pricing = req.db
+      .prepare(
+        'SELECT "employeeId" FROM program_pricing WHERE id = ? AND "userId" = ?'
+      )
+      .get(id, req.user.adminId);
 
     if (!pricing) {
       return res
@@ -144,9 +110,7 @@ exports.deleteProgramPricing = async (req, res) => {
         .json({ message: "Program pricing not found or not authorized." });
     }
 
-    // In the desktop version, only one admin user exists, so no need for employee check.
-
-    await dbRun(req.db, "DELETE FROM program_pricing WHERE id = ?", [id]);
+    req.db.prepare("DELETE FROM program_pricing WHERE id = ?").run(id);
 
     res.json({ message: "Program pricing deleted successfully" });
   } catch (error) {

@@ -1,7 +1,7 @@
 // frontend/src/App.tsx
 
 import {
-  BrowserRouter as Router,
+  HashRouter as Router,
   Routes,
   Route,
   Navigate,

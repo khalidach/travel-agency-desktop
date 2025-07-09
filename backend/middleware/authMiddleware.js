@@ -1,19 +1,6 @@
 // backend/middleware/authMiddleware.js
 const jwt = require("jsonwebtoken");
 
-// Helper to get a single row from the database
-const dbGet = (db, sql, params = []) => {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(row);
-      }
-    });
-  });
-};
-
 const protect = async (req, res, next) => {
   let token;
 
@@ -29,11 +16,11 @@ const protect = async (req, res, next) => {
       );
 
       // Fetch the user from the database to ensure they still exist
-      const user = await dbGet(
-        req.db,
-        `SELECT id, username, "agencyName", role, "facturationSettings" FROM users WHERE id = ?`,
-        [decoded.id]
+      // Using better-sqlite3 synchronous API
+      const stmt = req.db.prepare(
+        `SELECT id, username, "agencyName", role, "facturationSettings" FROM users WHERE id = ?`
       );
+      const user = stmt.get(decoded.id);
 
       if (!user) {
         return res

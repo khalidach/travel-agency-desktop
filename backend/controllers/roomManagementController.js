@@ -2,20 +2,11 @@
 const RoomManagementService = require("../services/RoomManagementService");
 const ExcelRoomService = require("../services/excelRoomService.js");
 
-const dbGet = (db, sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
-  });
-const dbAll = (db, sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
-  });
-
-exports.getRoomsByProgramAndHotel = async (req, res) => {
+exports.getRoomsByProgramAndHotel = (req, res) => {
   try {
     const { programId, hotelName } = req.params;
     const { adminId } = req.user;
-    const rooms = await RoomManagementService.getRooms(
+    const rooms = RoomManagementService.getRooms(
       req.db,
       adminId,
       programId,
@@ -28,13 +19,13 @@ exports.getRoomsByProgramAndHotel = async (req, res) => {
   }
 };
 
-exports.saveRooms = async (req, res) => {
+exports.saveRooms = (req, res) => {
   try {
     const { programId, hotelName } = req.params;
     const rooms = req.body.rooms;
     const { adminId } = req.user;
 
-    const savedRooms = await RoomManagementService.saveRooms(
+    const savedRooms = RoomManagementService.saveRooms(
       req.db,
       adminId,
       programId,
@@ -48,12 +39,12 @@ exports.saveRooms = async (req, res) => {
   }
 };
 
-exports.searchUnassignedOccupants = async (req, res) => {
+exports.searchUnassignedOccupants = (req, res) => {
   try {
     const { programId, hotelName } = req.params;
     const { searchTerm = "" } = req.query;
     const { adminId } = req.user;
-    const occupants = await RoomManagementService.searchUnassignedOccupants(
+    const occupants = RoomManagementService.searchUnassignedOccupants(
       req.db,
       adminId,
       programId,
@@ -72,19 +63,17 @@ exports.exportRoomsToExcel = async (req, res) => {
     const { programId } = req.params;
     const { adminId } = req.user;
 
-    const program = await dbGet(
-      req.db,
-      'SELECT * FROM programs WHERE id = ? AND "userId" = ?',
-      [programId, adminId]
-    );
+    const program = req.db
+      .prepare('SELECT * FROM programs WHERE id = ? AND "userId" = ?')
+      .get(programId, adminId);
     if (!program)
       return res.status(404).json({ message: "Program not found." });
 
-    const roomData = await dbAll(
-      req.db,
-      'SELECT * FROM room_managements WHERE "programId" = ? AND "userId" = ?',
-      [programId, adminId]
-    );
+    const roomData = req.db
+      .prepare(
+        'SELECT * FROM room_managements WHERE "programId" = ? AND "userId" = ?'
+      )
+      .all(programId, adminId);
 
     const parsedRoomData = roomData.map((rd) => ({
       ...rd,
@@ -112,8 +101,8 @@ exports.exportRoomsToExcel = async (req, res) => {
     );
     res.setHeader("Content-Disposition", `attachment; filename=${fileName}`);
 
-    await workbook.xlsx.write(res);
-    res.end();
+    const buffer = await workbook.xlsx.writeBuffer();
+    res.send(buffer);
   } catch (error) {
     console.error("Failed to export rooming list to Excel:", error);
     if (!res.headersSent) {

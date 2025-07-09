@@ -1,47 +1,20 @@
 // backend/controllers/factureController.js
 
-// --- Database Helper Functions ---
-const dbAll = (db, sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
-  });
-
-const dbGet = (db, sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
-  });
-
-const dbRun = (db, sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      err ? reject(err) : resolve(this);
-    });
-  });
-
-const getFactures = async (req, res) => {
+const getFactures = (req, res) => {
   try {
     const { adminId } = req.user;
     const page = parseInt(req.query.page || "1", 10);
     const limit = parseInt(req.query.limit || "10", 10);
     const offset = (page - 1) * limit;
 
-    const facturesPromise = dbAll(
-      req.db,
-      'SELECT * FROM factures WHERE "userId" = ? ORDER BY "createdAt" DESC LIMIT ? OFFSET ?',
-      [adminId, limit, offset]
+    const facturesStmt = req.db.prepare(
+      'SELECT * FROM factures WHERE "userId" = ? ORDER BY "createdAt" DESC LIMIT ? OFFSET ?'
     );
+    const factures = facturesStmt.all(adminId, limit, offset);
 
-    const totalCountPromise = dbGet(
-      req.db,
-      'SELECT COUNT(*) as totalCount FROM factures WHERE "userId" = ?',
-      [adminId]
-    );
-
-    const [factures, totalCountResult] = await Promise.all([
-      facturesPromise,
-      totalCountPromise,
-    ]);
-
+    const totalCountResult = req.db
+      .prepare('SELECT COUNT(*) as totalCount FROM factures WHERE "userId" = ?')
+      .get(adminId);
     const totalCount = totalCountResult.totalCount;
 
     res.json({
@@ -62,45 +35,42 @@ const getFactures = async (req, res) => {
   }
 };
 
-const createFacture = async (req, res) => {
+const createFacture = (req, res) => {
   const db = req.db;
-  db.serialize(async () => {
-    try {
-      await dbRun(db, "BEGIN TRANSACTION");
+  const createTransaction = db.transaction(() => {
+    const { adminId, id: employeeId, role } = req.user;
+    const {
+      clientName,
+      clientAddress,
+      date,
+      items,
+      type,
+      prixTotalHorsFrais,
+      totalFraisServiceHT,
+      tva,
+      total,
+      notes,
+    } = req.body;
 
-      const { adminId, id: employeeId, role } = req.user;
-      const {
-        clientName,
-        clientAddress,
-        date,
-        items,
-        type,
-        prixTotalHorsFrais,
-        totalFraisServiceHT,
-        tva,
-        total,
-        notes,
-      } = req.body;
+    const lastFactureRes = db
+      .prepare(
+        `SELECT facture_number FROM factures WHERE "userId" = ? AND facture_number IS NOT NULL ORDER BY CAST(facture_number AS INTEGER) DESC LIMIT 1`
+      )
+      .get(adminId);
 
-      const lastFactureRes = await dbGet(
-        db,
-        `SELECT facture_number FROM factures WHERE "userId" = ? AND facture_number IS NOT NULL ORDER BY CAST(facture_number AS INTEGER) DESC LIMIT 1`,
-        [adminId]
-      );
+    let nextFactureNumber = 1;
+    if (lastFactureRes && lastFactureRes.facture_number) {
+      nextFactureNumber = parseInt(lastFactureRes.facture_number, 10) + 1;
+    }
+    const formattedFactureNumber = nextFactureNumber
+      .toString()
+      .padStart(5, "0");
 
-      let nextFactureNumber = 1;
-      if (lastFactureRes && lastFactureRes.facture_number) {
-        nextFactureNumber = parseInt(lastFactureRes.facture_number, 10) + 1;
-      }
-
-      const formattedFactureNumber = nextFactureNumber
-        .toString()
-        .padStart(5, "0");
-
-      const sql = `INSERT INTO factures ("userId", "employeeId", "clientName", "clientAddress", date, items, type, "prixTotalHorsFrais", "totalFraisServiceHT", tva, total, notes, facture_number)
+    const sql = `INSERT INTO factures ("userId", "employeeId", "clientName", "clientAddress", date, items, type, "prixTotalHorsFrais", "totalFraisServiceHT", tva, total, notes, facture_number)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-
-      const result = await dbRun(db, sql, [
+    const result = db
+      .prepare(sql)
+      .run(
         adminId,
         role === "admin" ? null : employeeId,
         clientName,
@@ -113,35 +83,33 @@ const createFacture = async (req, res) => {
         tva,
         total,
         notes,
-        formattedFactureNumber,
-      ]);
-
-      const newFacture = await dbGet(
-        db,
-        "SELECT * FROM factures WHERE id = ?",
-        [result.lastID]
+        formattedFactureNumber
       );
 
-      await dbRun(db, "COMMIT");
-      res.status(201).json({
-        ...newFacture,
-        items: JSON.parse(newFacture.items || "[]"),
-      });
-    } catch (error) {
-      await dbRun(db, "ROLLBACK");
-      console.error("Create Facture Error:", error);
-      if (error.code === "SQLITE_CONSTRAINT") {
-        return res.status(409).json({
-          message:
-            "A facture with this number already exists. Please try again.",
-        });
-      }
-      res.status(400).json({ message: "Failed to create facture." });
-    }
+    const newFacture = db
+      .prepare("SELECT * FROM factures WHERE id = ?")
+      .get(result.lastInsertRowid);
+    return newFacture;
   });
+
+  try {
+    const newFacture = createTransaction();
+    res.status(201).json({
+      ...newFacture,
+      items: JSON.parse(newFacture.items || "[]"),
+    });
+  } catch (error) {
+    console.error("Create Facture Error:", error);
+    if (error.code === "SQLITE_CONSTRAINT") {
+      return res.status(409).json({
+        message: "A facture with this number already exists. Please try again.",
+      });
+    }
+    res.status(400).json({ message: "Failed to create facture." });
+  }
 };
 
-const updateFacture = async (req, res) => {
+const updateFacture = (req, res) => {
   try {
     const { id } = req.params;
     const { adminId } = req.user;
@@ -161,20 +129,22 @@ const updateFacture = async (req, res) => {
     const sql = `UPDATE factures SET "clientName" = ?, "clientAddress" = ?, date = ?, items = ?, type = ?, "prixTotalHorsFrais" = ?, "totalFraisServiceHT" = ?, tva = ?, total = ?, notes = ?, "updatedAt" = CURRENT_TIMESTAMP
        WHERE id = ? AND "userId" = ?`;
 
-    const result = await dbRun(req.db, sql, [
-      clientName,
-      clientAddress,
-      date,
-      JSON.stringify(items),
-      type,
-      prixTotalHorsFrais,
-      totalFraisServiceHT,
-      tva,
-      total,
-      notes,
-      id,
-      adminId,
-    ]);
+    const result = req.db
+      .prepare(sql)
+      .run(
+        clientName,
+        clientAddress,
+        date,
+        JSON.stringify(items),
+        type,
+        prixTotalHorsFrais,
+        totalFraisServiceHT,
+        tva,
+        total,
+        notes,
+        id,
+        adminId
+      );
 
     if (result.changes === 0) {
       return res
@@ -182,11 +152,9 @@ const updateFacture = async (req, res) => {
         .json({ message: "Facture not found or not authorized." });
     }
 
-    const updatedFacture = await dbGet(
-      req.db,
-      "SELECT * FROM factures WHERE id = ?",
-      [id]
-    );
+    const updatedFacture = req.db
+      .prepare("SELECT * FROM factures WHERE id = ?")
+      .get(id);
     res.json({
       ...updatedFacture,
       items: JSON.parse(updatedFacture.items || "[]"),
@@ -197,16 +165,14 @@ const updateFacture = async (req, res) => {
   }
 };
 
-const deleteFacture = async (req, res) => {
+const deleteFacture = (req, res) => {
   try {
     const { id } = req.params;
     const { adminId } = req.user;
 
-    const result = await dbRun(
-      req.db,
-      'DELETE FROM factures WHERE id = ? AND "userId" = ?',
-      [id, adminId]
-    );
+    const result = req.db
+      .prepare('DELETE FROM factures WHERE id = ? AND "userId" = ?')
+      .run(id, adminId);
 
     if (result.changes === 0) {
       return res

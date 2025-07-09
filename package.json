@@ -12,9 +12,16 @@
   "author": "Your Name",
   "license": "ISC",
   "dependencies": {
+    "bcryptjs": "^3.0.2",
     "body-parser": "^1.20.3",
     "cors": "^2.8.5",
-    "express": "^4.21.2"
+    "dotenv": "^17.1.0",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.2",
+    "express-validator": "^7.2.1",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.1",
+    "sqlite3": "^5.1.7"
   },
   "devDependencies": {
     "electron": "^28.3.3",
@@ -33,7 +40,10 @@
           "**/*"
         ]
       },
-      "frontend/dist/**/*"
+      {
+        "from": "frontend/dist",
+        "to": "frontend/dist"
+      }
     ],
     "directories": {
       "buildResources": "assets",

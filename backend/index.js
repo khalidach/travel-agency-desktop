@@ -2,6 +2,7 @@
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
+// Reverted to the standard sqlite3 package
 const sqlite3 = require("sqlite3").verbose();
 require("dotenv").config();
 

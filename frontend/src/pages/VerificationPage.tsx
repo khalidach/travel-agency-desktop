@@ -1,6 +1,6 @@
 // frontend/src/pages/VerificationPage.tsx
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { ShieldCheck, KeyRound, Plane } from "lucide-react";
 import { toast } from "react-hot-toast";
 
@@ -14,6 +14,24 @@ export default function VerificationPage({
 }: VerificationPageProps) {
   const [code, setCode] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [machineId, setMachineId] = useState<string | null>(null);
+
+  // Get the unique machine ID when the component loads
+  useEffect(() => {
+    const getMachineId = async () => {
+      try {
+        // Access the API exposed from the preload script
+        const id = await window.electronAPI.getMachineId();
+        setMachineId(id);
+      } catch (error) {
+        console.error("Failed to get machine ID:", error);
+        toast.error(
+          "Could not identify this computer. Please restart the application."
+        );
+      }
+    };
+    getMachineId();
+  }, []);
 
   // This function handles the form submission.
   const handleVerify = async (e: React.FormEvent) => {
@@ -22,40 +40,42 @@ export default function VerificationPage({
       toast.error("Please enter a verification code.");
       return;
     }
+    if (!machineId) {
+      toast.error(
+        "Computer could not be identified. Please restart the application."
+      );
+      return;
+    }
+
     setIsLoading(true);
 
     try {
       // The URL for your deployed Netlify function.
-      // Replace 'YOUR_NETLIFY_SITE_NAME' with your actual Netlify site name.
       const verificationUrl =
         "https://travel-agency-desktop.netlify.app/api/verify";
 
-      // Send the verification code to your backend.
+      // Send the verification code AND the machine ID to your backend.
       const response = await fetch(verificationUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ code: code.trim() }),
+        body: JSON.stringify({ code: code.trim(), machineId: machineId }),
       });
 
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        // If the response is not OK or success is false, show an error.
         throw new Error(data.message || "Verification failed.");
       }
 
-      // If verification is successful, show a success message and call the onVerified callback.
       toast.success("Verification successful! Welcome.");
       onVerified();
     } catch (error) {
-      // Handle any errors that occur during the fetch.
       const errorMessage =
         error instanceof Error ? error.message : "An unknown error occurred.";
       toast.error(errorMessage);
     } finally {
-      // Reset the loading state regardless of the outcome.
       setIsLoading(false);
     }
   };
@@ -94,13 +114,13 @@ export default function VerificationPage({
                 placeholder="Enter your code"
                 className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
                 required
-                disabled={isLoading}
+                disabled={isLoading || !machineId}
               />
             </div>
           </div>
           <button
             type="submit"
-            disabled={isLoading}
+            disabled={isLoading || !machineId}
             className="w-full py-3 px-4 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 transition-all duration-200 shadow-sm disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center"
           >
             <ShieldCheck className="w-5 h-5 mr-2" />

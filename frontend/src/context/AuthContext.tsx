@@ -1,4 +1,5 @@
 // frontend/src/context/AuthContext.tsx
+
 import React, {
   createContext,
   useContext,
@@ -6,38 +7,39 @@ import React, {
   ReactNode,
   useEffect,
 } from "react";
-import * as api from "../services/api";
-import { toast } from "react-hot-toast";
 import type { User } from "./models";
 
+// --- STATE AND ACTION TYPES ---
 interface AuthState {
   isAuthenticated: boolean;
+  isVerified: boolean; // New state to track if the app is verified
   user: User | null;
   loading: boolean;
 }
 
 type AuthAction =
   | { type: "LOGIN"; payload: User }
-  | { type: "REFRESH_TOKEN"; payload: User }
-  | { type: "LOGOUT" }
-  | { type: "SET_LOADING"; payload: boolean }
-  | { type: "UPDATE_USER_DETAILS"; payload: { agencyName?: string } };
+  | { type: "VERIFY" } // New action for successful verification
+  | { type: "LOGOUT" };
 
-// Use sessionStorage to ensure session is cleared when the tab is closed.
+// --- INITIAL STATE ---
+// Check sessionStorage for both user and verification status
 const userFromStorage = sessionStorage.getItem("user");
+const verifiedFromStorage = sessionStorage.getItem("isVerified");
+
 const initialUser = userFromStorage ? JSON.parse(userFromStorage) : null;
 
 const initialState: AuthState = {
   loading: false,
   isAuthenticated: !!initialUser,
+  isVerified: verifiedFromStorage === "true", // Check if verified
   user: initialUser,
 };
 
+// --- REDUCER ---
 function authReducer(state: AuthState, action: AuthAction): AuthState {
   switch (action.type) {
     case "LOGIN":
-    case "REFRESH_TOKEN":
-      // Use sessionStorage to store user data for the current session.
       sessionStorage.setItem("user", JSON.stringify(action.payload));
       return {
         ...state,
@@ -45,32 +47,29 @@ function authReducer(state: AuthState, action: AuthAction): AuthState {
         user: action.payload,
         loading: false,
       };
+    case "VERIFY":
+      // When verified, set the flag in state and sessionStorage
+      sessionStorage.setItem("isVerified", "true");
+      return {
+        ...state,
+        isVerified: true,
+      };
     case "LOGOUT":
-      // Remove user data from sessionStorage on logout.
+      // On logout, clear everything including verification status
       sessionStorage.removeItem("user");
+      sessionStorage.removeItem("isVerified");
       return {
         ...initialState,
         isAuthenticated: false,
+        isVerified: false,
         user: null,
-        loading: false,
       };
-    case "SET_LOADING":
-      return { ...state, loading: action.payload };
-    case "UPDATE_USER_DETAILS":
-      if (state.user) {
-        const updatedUser = { ...state.user, ...action.payload };
-        sessionStorage.setItem("user", JSON.stringify(updatedUser));
-        return {
-          ...state,
-          user: updatedUser,
-        };
-      }
-      return state;
     default:
       return state;
   }
 }
 
+// --- CONTEXT AND PROVIDER ---
 const AuthContext = createContext<{
   state: AuthState;
   dispatch: React.Dispatch<AuthAction>;
@@ -79,15 +78,6 @@ const AuthContext = createContext<{
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(authReducer, initialState);
 
-  useEffect(() => {
-    const handleAuthError = () => {
-      dispatch({ type: "LOGOUT" });
-      toast.error("Your session has expired. Please log in again.");
-    };
-    window.addEventListener("auth-error", handleAuthError);
-    return () => window.removeEventListener("auth-error", handleAuthError);
-  }, []);
-
   return (
     <AuthContext.Provider value={{ state, dispatch }}>
       {children}
@@ -95,6 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// --- HOOK ---
 export function useAuthContext() {
   const context = useContext(AuthContext);
   if (!context) {

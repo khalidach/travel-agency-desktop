@@ -1,4 +1,5 @@
 // frontend/src/App.tsx
+
 import {
   BrowserRouter as Router,
   Routes,
@@ -13,11 +14,11 @@ import { useMutation } from "@tanstack/react-query";
 
 import { AuthProvider, useAuthContext } from "./context/AuthContext";
 import Layout from "./components/Layout";
-import useIdleTimeout from "./services/useIdleTimeout";
 import BookingSkeleton from "./components/skeletons/BookingSkeleton";
 import * as api from "./services/api";
+import VerificationPage from "./pages/VerificationPage"; // Import the new page
 
-// Lazy load the page components
+// Lazy load the page components (no changes here)
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Programs = lazy(() => import("./pages/Programs"));
 const Booking = lazy(() => import("./pages/Booking"));
@@ -34,33 +35,36 @@ const DailyServiceReport = lazy(() => import("./pages/DailyServiceReport"));
 function AppContent() {
   const { state, dispatch } = useAuthContext();
 
-  // This mutation will automatically log in the user when the app starts.
+  // The auto-login mutation remains the same.
   const { mutate: autoLogin, isPending: isLoggingIn } = useMutation({
-    mutationFn: () => api.login(), // No username/password needed
+    mutationFn: () => api.login(),
     onSuccess: (userData) => {
       dispatch({ type: "LOGIN", payload: userData });
     },
     onError: (error) => {
       console.error("Auto-login failed:", error);
-      // You could show an error message to the user here
     },
   });
 
-  // Run the auto-login only once when the component mounts
+  // This effect will run once to try and log the user in automatically.
   useEffect(() => {
-    if (!state.isAuthenticated) {
+    if (state.isVerified && !state.isAuthenticated) {
       autoLogin();
     }
-  }, [autoLogin, state.isAuthenticated]);
+  }, [autoLogin, state.isAuthenticated, state.isVerified]);
 
-  useIdleTimeout();
+  // --- NEW LOGIC ---
+  // If the application has not been verified, show the verification page.
+  if (!state.isVerified) {
+    return <VerificationPage onVerified={() => dispatch({ type: "VERIFY" })} />;
+  }
 
-  // Show a loading screen while auto-login is in progress
+  // If verified but still logging in, show a skeleton loader.
   if (isLoggingIn || !state.isAuthenticated) {
     return <BookingSkeleton />;
   }
 
-  // Once authenticated, show the main application layout
+  // If verified and authenticated, show the main application.
   return (
     <Layout>
       <Suspense fallback={<BookingSkeleton />}>

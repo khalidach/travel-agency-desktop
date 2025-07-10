@@ -1,5 +1,5 @@
 // frontend/src/pages/BookingPage.tsx
-import React, { useMemo, useEffect, useReducer } from "react";
+import React, { useMemo, useEffect, useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -39,6 +39,7 @@ interface BookingPageState {
   isExporting: boolean;
   importFile: File | null;
   currentPage: number;
+  selectedBookingIds: Set<number>; // New state for selected IDs
 }
 
 type BookingPageAction =
@@ -48,7 +49,10 @@ type BookingPageAction =
   | { type: "SET_BOOKING_TO_DELETE"; payload: number | null }
   | { type: "SET_IS_EXPORTING"; payload: boolean }
   | { type: "SET_IMPORT_FILE"; payload: File | null }
-  | { type: "SET_CURRENT_PAGE"; payload: number };
+  | { type: "SET_CURRENT_PAGE"; payload: number }
+  | { type: "TOGGLE_SELECTION"; payload: { id: number; isSelected: boolean } }
+  | { type: "TOGGLE_SELECT_ALL"; payload: number[] }
+  | { type: "CLEAR_SELECTION" };
 
 const initialState: BookingPageState = {
   isBookingModalOpen: false,
@@ -58,6 +62,7 @@ const initialState: BookingPageState = {
   isExporting: false,
   importFile: null,
   currentPage: 1,
+  selectedBookingIds: new Set(), // Initialize as empty set
 };
 
 function bookingPageReducer(
@@ -83,6 +88,22 @@ function bookingPageReducer(
       return { ...state, importFile: action.payload };
     case "SET_CURRENT_PAGE":
       return { ...state, currentPage: action.payload };
+    case "TOGGLE_SELECTION":
+      const newSelection = new Set(state.selectedBookingIds);
+      if (action.payload.isSelected) {
+        newSelection.add(action.payload.id);
+      } else {
+        newSelection.delete(action.payload.id);
+      }
+      return { ...state, selectedBookingIds: newSelection };
+    case "TOGGLE_SELECT_ALL":
+      if (state.selectedBookingIds.size === action.payload.length) {
+        return { ...state, selectedBookingIds: new Set() };
+      } else {
+        return { ...state, selectedBookingIds: new Set(action.payload) };
+      }
+    case "CLEAR_SELECTION":
+      return { ...state, selectedBookingIds: new Set() };
     default:
       return state;
   }
@@ -114,6 +135,7 @@ export default function BookingPage() {
     isExporting,
     importFile,
     currentPage,
+    selectedBookingIds,
   } = state;
 
   const bookingsPerPage = 10;
@@ -129,6 +151,7 @@ export default function BookingPage() {
 
   useEffect(() => {
     dispatch({ type: "SET_CURRENT_PAGE", payload: 1 });
+    dispatch({ type: "CLEAR_SELECTION" });
   }, [debouncedSearchTerm, sortOrder, statusFilter]);
 
   const bookingQueryKey = [
@@ -258,6 +281,17 @@ export default function BookingPage() {
     },
     onError: (error: Error) =>
       toast.error(error.message || "Failed to delete booking."),
+  });
+
+  const { mutate: deleteMultipleBookings } = useMutation({
+    mutationFn: (ids: number[]) => api.deleteMultipleBookings(ids),
+    onSuccess: () => {
+      invalidateAllQueries();
+      dispatch({ type: "CLEAR_SELECTION" });
+      toast.success("Selected bookings deleted!");
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || "Failed to delete selected bookings."),
   });
 
   const { mutate: addPayment } = useMutation({
@@ -417,6 +451,15 @@ export default function BookingPage() {
     }
   };
 
+  const handleToggleSelection = (id: number, isSelected: boolean) => {
+    dispatch({ type: "TOGGLE_SELECTION", payload: { id, isSelected } });
+  };
+
+  const handleToggleSelectAll = () => {
+    const allVisibleIds = processedBookings.map((b) => b.id);
+    dispatch({ type: "TOGGLE_SELECT_ALL", payload: allVisibleIds });
+  };
+
   if (isLoadingProgram) return <BookingSkeleton />;
 
   return (
@@ -429,6 +472,10 @@ export default function BookingPage() {
         onImport={handleImport}
         isImporting={isImporting}
         importFile={importFile}
+        selectedCount={selectedBookingIds.size}
+        onDeleteSelected={() =>
+          deleteMultipleBookings(Array.from(selectedBookingIds))
+        }
       />
 
       {summaryStats && !isLoadingBookings ? (
@@ -470,6 +517,9 @@ export default function BookingPage() {
             onManagePayments={(booking) =>
               dispatch({ type: "SET_SELECTED_FOR_PAYMENT", payload: booking })
             }
+            selectedIds={selectedBookingIds}
+            onSelectOne={handleToggleSelection}
+            onSelectAll={handleToggleSelectAll}
           />
 
           {totalPages > 1 && (

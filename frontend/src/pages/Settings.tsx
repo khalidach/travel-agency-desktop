@@ -40,6 +40,7 @@ export default function Settings() {
     }) => api.updateSettings(data),
     onSuccess: (updatedData) => {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
+      // This dispatch updates the user's state in the application instantly.
       dispatch({
         type: "UPDATE_USER_DETAILS",
         payload: { agencyName: updatedData.agencyName },

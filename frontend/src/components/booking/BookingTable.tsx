@@ -17,6 +17,9 @@ interface BookingTableProps {
   onEditBooking: (booking: Booking) => void;
   onDeleteBooking: (bookingId: number) => void;
   onManagePayments: (booking: Booking) => void;
+  selectedIds: Set<number>;
+  onSelectOne: (id: number, isSelected: boolean) => void;
+  onSelectAll: () => void;
 }
 
 export default function BookingTable({
@@ -25,6 +28,9 @@ export default function BookingTable({
   onEditBooking,
   onDeleteBooking,
   onManagePayments,
+  selectedIds,
+  onSelectOne,
+  onSelectAll,
 }: BookingTableProps) {
   const { t } = useTranslation();
 
@@ -36,12 +42,23 @@ export default function BookingTable({
   const getStatusText = (isFullyPaid: boolean) =>
     t(isFullyPaid ? "fullyPaid" : "pending");
 
+  const isAllSelected =
+    bookings.length > 0 && selectedIds.size === bookings.length;
+
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead className="bg-gray-50">
             <tr>
+              <th className="px-6 py-4">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  checked={isAllSelected}
+                  onChange={onSelectAll}
+                />
+              </th>
               <th
                 className={`px-6 py-4 text-xs font-medium text-gray-500 uppercase tracking-wider ${
                   document.documentElement.dir === "rtl"
@@ -98,14 +115,25 @@ export default function BookingTable({
                 (sum, payment) => sum + Number(payment.amount),
                 0
               );
+              const isSelected = selectedIds.has(booking.id);
 
               return (
                 <tr
                   key={booking.id}
-                  className={`hover:bg-gray-50 transition-colors ${
-                    booking.isRelated ? "bg-blue-50" : ""
-                  }`}
+                  className={`transition-colors ${
+                    isSelected ? "bg-blue-50" : "hover:bg-gray-50"
+                  } ${booking.isRelated ? "bg-gray-50" : ""}`}
                 >
+                  <td className="px-6 py-4">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      checked={isSelected}
+                      onChange={(e) =>
+                        onSelectOne(booking.id, e.target.checked)
+                      }
+                    />
+                  </td>
                   <td
                     className={`px-6 py-4 align-top ${
                       booking.isRelated ? "pl-12" : ""

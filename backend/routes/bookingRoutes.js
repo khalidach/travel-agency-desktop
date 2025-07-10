@@ -8,6 +8,7 @@ const {
   createBooking,
   updateBooking,
   deleteBooking,
+  deleteMultipleBookings, // Import new controller
   addPayment,
   updatePayment,
   deletePayment,
@@ -36,6 +37,7 @@ router.post(
 );
 router.put("/:id", bookingValidation, handleValidationErrors, updateBooking);
 router.delete("/:id", deleteBooking);
+router.post("/bulk-delete", deleteMultipleBookings); // Add new route for bulk delete
 
 // Excel and Template routes
 router.get(

@@ -244,108 +244,113 @@ exports.generateBookingTemplateForProgramExcel = async (program) => {
 };
 
 exports.parseBookingsFromExcel = async (file, user, db, programId) => {
-  const parseTransaction = db.transaction(() => {
-    const workbook = new excel.Workbook();
-    // This part must remain async
-    return workbook.xlsx.readFile(file.path).then(() => {
-      const worksheet = workbook.getWorksheet(1);
+  // Step 1: Asynchronously read and parse the entire Excel file into memory.
+  const workbook = new excel.Workbook();
+  await workbook.xlsx.readFile(file.path);
+  const worksheet = workbook.getWorksheet(1);
 
-      const program = db
-        .prepare('SELECT * FROM programs WHERE "userId" = ? AND id = ?')
-        .get(user.adminId, programId);
-      if (!program) throw new Error("Program not found.");
-      program.packages = JSON.parse(program.packages || "[]");
-      program.cities = JSON.parse(program.cities || "[]");
-
-      const existingBookings = db
-        .prepare(
-          'SELECT "passportNumber" FROM bookings WHERE "userId" = ? AND "tripId" = ?'
-        )
-        .all(user.adminId, programId);
-      const existingPassportNumbers = new Set(
-        existingBookings.map((b) => b.passportNumber)
-      );
-
-      const headerRow = worksheet.getRow(1).values;
-      const headerMap = {};
-      if (Array.isArray(headerRow)) {
-        headerRow.forEach((header, index) => {
-          if (header) headerMap[header.toString()] = index;
-        });
-      }
-
-      let newBookingsCount = 0;
-      const insertStmt = db.prepare(
-        'INSERT INTO bookings ("userId", "employeeId", "clientNameAr", "clientNameFr", "personType", "phoneNumber", "passportNumber", "tripId", "packageId", "selectedHotel", "sellingPrice", "basePrice", profit, "advancePayments", "remainingBalance", "isFullyPaid") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-      );
-
-      for (let i = 2; i <= worksheet.rowCount; i++) {
-        const row = worksheet.getRow(i);
-        const rowData = {};
-        Object.keys(headerMap).forEach((header) => {
-          rowData[header] = row.getCell(headerMap[header]).value;
-        });
-
-        const passportNumber = rowData["Passport Number"];
-        if (!passportNumber || existingPassportNumbers.has(passportNumber))
-          continue;
-
-        const selectedHotel = { cities: [], hotelNames: [], roomTypes: [] };
-        (program.cities || []).forEach((city) => {
-          const hotelName = rowData[`${city.name} Hotel`];
-          const roomType = rowData[`${city.name} Room Type`];
-          if (hotelName && roomType) {
-            selectedHotel.cities.push(city.name);
-            selectedHotel.hotelNames.push(hotelName);
-            selectedHotel.roomTypes.push(roomType);
-          }
-        });
-
-        const basePrice = calculateBasePrice(
-          db,
-          user.adminId,
-          programId,
-          rowData["Package"],
-          selectedHotel,
-          rowData["Person Type"] || "adult"
-        );
-        const sellingPrice = Number(rowData["Selling Price"]) || 0;
-        const profit = sellingPrice - basePrice;
-
-        insertStmt.run(
-          user.adminId,
-          null,
-          rowData["Client Name (Arabic)"],
-          rowData["Client Name (French)"],
-          rowData["Person Type"] || "adult",
-          rowData["Phone Number"] || "",
-          passportNumber,
-          programId,
-          rowData["Package"],
-          JSON.stringify(selectedHotel),
-          sellingPrice,
-          basePrice,
-          profit,
-          "[]",
-          sellingPrice,
-          sellingPrice <= 0 ? 1 : 0
-        );
-
-        newBookingsCount++;
-        existingPassportNumbers.add(passportNumber);
-      }
-
-      if (newBookingsCount > 0) {
-        db.prepare(
-          'UPDATE programs SET "totalBookings" = "totalBookings" + ? WHERE id = ?'
-        ).run(newBookingsCount, programId);
-      }
-
-      return {
-        message: `Import complete. ${newBookingsCount} new bookings added.`,
-      };
+  const headerRow = worksheet.getRow(1).values;
+  const headerMap = {};
+  if (Array.isArray(headerRow)) {
+    headerRow.forEach((header, index) => {
+      if (header) headerMap[header.toString()] = index;
     });
+  }
+
+  const rowsToInsert = [];
+  for (let i = 2; i <= worksheet.rowCount; i++) {
+    const row = worksheet.getRow(i);
+    const rowData = {};
+    Object.keys(headerMap).forEach((header) => {
+      rowData[header] = row.getCell(headerMap[header]).value;
+    });
+    rowsToInsert.push(rowData);
+  }
+
+  // Step 2: Define the synchronous database transaction function.
+  const importTransaction = db.transaction((parsedRows) => {
+    const program = db
+      .prepare('SELECT * FROM programs WHERE "userId" = ? AND id = ?')
+      .get(user.adminId, programId);
+    if (!program) throw new Error("Program not found.");
+    program.packages = JSON.parse(program.packages || "[]");
+    program.cities = JSON.parse(program.cities || "[]");
+
+    const existingBookings = db
+      .prepare(
+        'SELECT "passportNumber" FROM bookings WHERE "userId" = ? AND "tripId" = ?'
+      )
+      .all(user.adminId, programId);
+    const existingPassportNumbers = new Set(
+      existingBookings.map((b) => b.passportNumber)
+    );
+
+    let newBookingsCount = 0;
+    const insertStmt = db.prepare(
+      'INSERT INTO bookings ("userId", "employeeId", "clientNameAr", "clientNameFr", "personType", "phoneNumber", "passportNumber", "tripId", "packageId", "selectedHotel", "sellingPrice", "basePrice", profit, "advancePayments", "remainingBalance", "isFullyPaid") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    );
+
+    for (const rowData of parsedRows) {
+      const passportNumber = rowData["Passport Number"];
+      if (!passportNumber || existingPassportNumbers.has(passportNumber))
+        continue;
+
+      const selectedHotel = { cities: [], hotelNames: [], roomTypes: [] };
+      (program.cities || []).forEach((city) => {
+        const hotelName = rowData[`${city.name} Hotel`];
+        const roomType = rowData[`${city.name} Room Type`];
+        if (hotelName && roomType) {
+          selectedHotel.cities.push(city.name);
+          selectedHotel.hotelNames.push(hotelName);
+          selectedHotel.roomTypes.push(roomType);
+        }
+      });
+
+      const basePrice = calculateBasePrice(
+        db,
+        user.adminId,
+        programId,
+        rowData["Package"],
+        selectedHotel,
+        rowData["Person Type"] || "adult"
+      );
+      const sellingPrice = Number(rowData["Selling Price"]) || 0;
+      const profit = sellingPrice - basePrice;
+
+      insertStmt.run(
+        user.adminId,
+        null,
+        rowData["Client Name (Arabic)"],
+        rowData["Client Name (French)"],
+        rowData["Person Type"] || "adult",
+        rowData["Phone Number"] || "",
+        passportNumber,
+        programId,
+        rowData["Package"],
+        JSON.stringify(selectedHotel),
+        sellingPrice,
+        basePrice,
+        profit,
+        "[]",
+        sellingPrice,
+        sellingPrice <= 0 ? 1 : 0
+      );
+
+      newBookingsCount++;
+      existingPassportNumbers.add(passportNumber);
+    }
+
+    if (newBookingsCount > 0) {
+      db.prepare(
+        'UPDATE programs SET "totalBookings" = "totalBookings" + ? WHERE id = ?'
+      ).run(newBookingsCount, programId);
+    }
+
+    return {
+      message: `Import complete. ${newBookingsCount} new bookings added.`,
+    };
   });
 
-  return parseTransaction();
+  // Step 3: Execute the transaction with the data parsed from the Excel file.
+  return importTransaction(rowsToInsert);
 };

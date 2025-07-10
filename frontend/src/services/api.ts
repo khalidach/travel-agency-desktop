@@ -22,8 +22,8 @@ async function request(
   options: RequestInit = {},
   returnsBlob = false
 ) {
-  // Use sessionStorage to get user data for the current session.
-  const userStr = sessionStorage.getItem("user");
+  // CORRECTED: Read from localStorage to match AuthContext
+  const userStr = localStorage.getItem("user");
   const user = userStr ? JSON.parse(userStr) : null;
   const headers = {
     "Content-Type": "application/json",
@@ -220,6 +220,11 @@ export const updateBooking = (id: number, booking: any) =>
   request(`/bookings/${id}`, { method: "PUT", body: JSON.stringify(booking) });
 export const deleteBooking = (id: number) =>
   request(`/bookings/${id}`, { method: "DELETE" });
+export const deleteMultipleBookings = (ids: number[]) =>
+  request("/bookings/bulk-delete", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
 
 // --- Payment API ---
 export const addPayment = (bookingId: number, payment: any) =>
@@ -249,7 +254,7 @@ export const exportBookingTemplateForProgram = (programId: string) =>
 export const importBookings = (file: File, programId: string) => {
   const formData = new FormData();
   formData.append("file", file);
-  const userStr = sessionStorage.getItem("user");
+  const userStr = localStorage.getItem("user"); // CORRECTED
   const user = userStr ? JSON.parse(userStr) : null;
   const headers: Record<string, string> = {};
   if (user && user.token) {

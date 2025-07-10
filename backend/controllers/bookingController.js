@@ -245,6 +245,54 @@ exports.deleteBooking = (req, res) => {
   }
 };
 
+exports.deleteMultipleBookings = (req, res) => {
+  const { ids } = req.body;
+  const { adminId } = req.user;
+  const db = req.db;
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ message: "No booking IDs provided." });
+  }
+
+  try {
+    const deleteTransaction = db.transaction(() => {
+      const placeholders = ids.map(() => "?").join(",");
+      const bookingsToDelete = db
+        .prepare(
+          `SELECT "tripId" FROM bookings WHERE id IN (${placeholders}) AND "userId" = ?`
+        )
+        .all(...ids, adminId);
+
+      if (bookingsToDelete.length !== ids.length) {
+        throw new Error("One or more bookings not found or not authorized.");
+      }
+
+      const programCounts = bookingsToDelete.reduce((acc, booking) => {
+        acc[booking.tripId] = (acc[booking.tripId] || 0) + 1;
+        return acc;
+      }, {});
+
+      const deleteStmt = db.prepare(
+        `DELETE FROM bookings WHERE id IN (${placeholders}) AND "userId" = ?`
+      );
+      deleteStmt.run(...ids, adminId);
+
+      const updateProgramStmt = db.prepare(
+        'UPDATE programs SET "totalBookings" = "totalBookings" - ? WHERE id = ?'
+      );
+      for (const tripId in programCounts) {
+        updateProgramStmt.run(programCounts[tripId], tripId);
+      }
+    });
+
+    deleteTransaction();
+    res.json({ message: "Selected bookings deleted successfully." });
+  } catch (error) {
+    console.error("Bulk Delete Bookings Error:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 exports.addPayment = (req, res) => {
   try {
     const { bookingId } = req.params;

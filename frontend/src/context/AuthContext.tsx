@@ -14,10 +14,11 @@ interface AuthState {
 type AuthAction =
   | { type: "LOGIN"; payload: User }
   | { type: "VERIFY" }
-  | { type: "LOGOUT" };
+  | { type: "LOGOUT" }
+  | { type: "UPDATE_USER_DETAILS"; payload: Partial<User> };
 
 // --- INITIAL STATE ---
-// Read from localStorage instead of sessionStorage
+// Read from localStorage
 const userFromStorage = localStorage.getItem("user");
 const verifiedFromStorage = localStorage.getItem("isVerified");
 
@@ -26,7 +27,7 @@ const initialUser = userFromStorage ? JSON.parse(userFromStorage) : null;
 const initialState: AuthState = {
   loading: false,
   isAuthenticated: !!initialUser,
-  isVerified: verifiedFromStorage === "true", // Check if verified
+  isVerified: verifiedFromStorage === "true",
   user: initialUser,
 };
 
@@ -50,15 +51,25 @@ function authReducer(state: AuthState, action: AuthAction): AuthState {
         isVerified: true,
       };
     case "LOGOUT":
-      // On logout, clear everything from localStorage
+      // CORRECTED: Remove both user and verification status from localStorage.
       localStorage.removeItem("user");
       localStorage.removeItem("isVerified");
       return {
         ...initialState,
         isAuthenticated: false,
-        isVerified: false,
+        isVerified: false, // Set isVerified to false
         user: null,
       };
+    case "UPDATE_USER_DETAILS":
+      if (state.user) {
+        const updatedUser = { ...state.user, ...action.payload };
+        localStorage.setItem("user", JSON.stringify(updatedUser));
+        return {
+          ...state,
+          user: updatedUser,
+        };
+      }
+      return state;
     default:
       return state;
   }

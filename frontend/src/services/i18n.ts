@@ -4,6 +4,10 @@ import { initReactI18next } from "react-i18next";
 const resources = {
   en: {
     translation: {
+      // English translations for the application
+      selectAll:
+        "Select all {{totalBookingCount}} bookings that match these filters",
+      selectedBookingsCount: "{{count}} bookings on this page are selected.",
       // Navigation
       dashboard: "Dashboard",
       programs: "Programs",
@@ -380,6 +384,10 @@ const resources = {
   },
   ar: {
     translation: {
+      // Arabic translations for the application
+      selectAll:
+        "حدد جميع الحجوزات البالغ عددها {{totalBookingCount}} التي تطابق هذه المرشحات",
+      selectedBookingsCount: "تم تحديد {{count}} حجز في هذه الصفحة.",
       // Navigation
       dashboard: "لوحة التحكم",
       programs: "البرامج",
@@ -751,6 +759,11 @@ const resources = {
   },
   fr: {
     translation: {
+      // French translations for the application
+      selectAll:
+        "Sélectionner toutes les réservations ({{totalBookingCount}}) correspondant à ces filtres",
+      selectedBookingsCount:
+        "{{count}} réservations sélectionnées sur cette page.",
       // Navigation
       dashboard: "Tableau de Bord",
       programs: "Programmes",

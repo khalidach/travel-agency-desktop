@@ -1,5 +1,5 @@
 // frontend/src/pages/BookingPage.tsx
-import React, { useMemo, useEffect, useReducer, useState } from "react";
+import React, { useMemo, useEffect, useReducer } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -39,7 +39,8 @@ interface BookingPageState {
   isExporting: boolean;
   importFile: File | null;
   currentPage: number;
-  selectedBookingIds: Set<number>; // New state for selected IDs
+  selectedBookingIds: Set<number>;
+  isSelectAllMode: boolean; // New flag for selecting all bookings matching filters
 }
 
 type BookingPageAction =
@@ -50,8 +51,12 @@ type BookingPageAction =
   | { type: "SET_IS_EXPORTING"; payload: boolean }
   | { type: "SET_IMPORT_FILE"; payload: File | null }
   | { type: "SET_CURRENT_PAGE"; payload: number }
-  | { type: "TOGGLE_SELECTION"; payload: { id: number; isSelected: boolean } }
-  | { type: "TOGGLE_SELECT_ALL"; payload: number[] }
+  | { type: "TOGGLE_SELECTION"; payload: { id: number } }
+  | {
+      type: "TOGGLE_PAGE_SELECTION";
+      payload: { ids: number[]; select: boolean };
+    }
+  | { type: "TOGGLE_SELECT_ALL_MODE" }
   | { type: "CLEAR_SELECTION" };
 
 const initialState: BookingPageState = {
@@ -62,7 +67,8 @@ const initialState: BookingPageState = {
   isExporting: false,
   importFile: null,
   currentPage: 1,
-  selectedBookingIds: new Set(), // Initialize as empty set
+  selectedBookingIds: new Set(),
+  isSelectAllMode: false,
 };
 
 function bookingPageReducer(
@@ -90,20 +96,40 @@ function bookingPageReducer(
       return { ...state, currentPage: action.payload };
     case "TOGGLE_SELECTION":
       const newSelection = new Set(state.selectedBookingIds);
-      if (action.payload.isSelected) {
-        newSelection.add(action.payload.id);
-      } else {
+      if (newSelection.has(action.payload.id)) {
         newSelection.delete(action.payload.id);
-      }
-      return { ...state, selectedBookingIds: newSelection };
-    case "TOGGLE_SELECT_ALL":
-      if (state.selectedBookingIds.size === action.payload.length) {
-        return { ...state, selectedBookingIds: new Set() };
       } else {
-        return { ...state, selectedBookingIds: new Set(action.payload) };
+        newSelection.add(action.payload.id);
       }
+      return {
+        ...state,
+        selectedBookingIds: newSelection,
+        isSelectAllMode: false,
+      };
+    case "TOGGLE_PAGE_SELECTION":
+      const updatedSelection = new Set(state.selectedBookingIds);
+      if (action.payload.select) {
+        action.payload.ids.forEach((id) => updatedSelection.add(id));
+      } else {
+        action.payload.ids.forEach((id) => updatedSelection.delete(id));
+      }
+      return {
+        ...state,
+        selectedBookingIds: updatedSelection,
+        isSelectAllMode: false,
+      };
+    case "TOGGLE_SELECT_ALL_MODE":
+      return {
+        ...state,
+        isSelectAllMode: !state.isSelectAllMode,
+        selectedBookingIds: new Set(),
+      };
     case "CLEAR_SELECTION":
-      return { ...state, selectedBookingIds: new Set() };
+      return {
+        ...state,
+        selectedBookingIds: new Set(),
+        isSelectAllMode: false,
+      };
     default:
       return state;
   }
@@ -136,6 +162,7 @@ export default function BookingPage() {
     importFile,
     currentPage,
     selectedBookingIds,
+    isSelectAllMode,
   } = state;
 
   const bookingsPerPage = 10;
@@ -284,7 +311,12 @@ export default function BookingPage() {
   });
 
   const { mutate: deleteMultipleBookings } = useMutation({
-    mutationFn: (ids: number[]) => api.deleteMultipleBookings(ids),
+    mutationFn: (data: {
+      ids?: number[];
+      deleteAllMatchingFilters?: boolean;
+      filters?: { searchTerm: string; statusFilter: string };
+      programId?: string;
+    }) => api.deleteMultipleBookings(data),
     onSuccess: () => {
       invalidateAllQueries();
       dispatch({ type: "CLEAR_SELECTION" });
@@ -451,13 +483,29 @@ export default function BookingPage() {
     }
   };
 
-  const handleToggleSelection = (id: number, isSelected: boolean) => {
-    dispatch({ type: "TOGGLE_SELECTION", payload: { id, isSelected } });
+  const handleToggleSelection = (id: number) => {
+    dispatch({ type: "TOGGLE_SELECTION", payload: { id } });
   };
 
   const handleToggleSelectAll = () => {
-    const allVisibleIds = processedBookings.map((b) => b.id);
-    dispatch({ type: "TOGGLE_SELECT_ALL", payload: allVisibleIds });
+    const pageIds = processedBookings.map((b) => b.id);
+    const areAllSelected = pageIds.every((id) => selectedBookingIds.has(id));
+    dispatch({
+      type: "TOGGLE_PAGE_SELECTION",
+      payload: { ids: pageIds, select: !areAllSelected },
+    });
+  };
+
+  const handleDeleteSelected = () => {
+    if (isSelectAllMode) {
+      deleteMultipleBookings({
+        deleteAllMatchingFilters: true,
+        filters: { searchTerm: debouncedSearchTerm, statusFilter },
+        programId,
+      });
+    } else {
+      deleteMultipleBookings({ ids: Array.from(selectedBookingIds) });
+    }
   };
 
   if (isLoadingProgram) return <BookingSkeleton />;
@@ -472,10 +520,6 @@ export default function BookingPage() {
         onImport={handleImport}
         isImporting={isImporting}
         importFile={importFile}
-        selectedCount={selectedBookingIds.size}
-        onDeleteSelected={() =>
-          deleteMultipleBookings(Array.from(selectedBookingIds))
-        }
       />
 
       {summaryStats && !isLoadingBookings ? (
@@ -499,12 +543,48 @@ export default function BookingPage() {
         handleExport={handleExport}
         isExporting={isExporting}
         onSearchKeyDown={() => {}}
+        selectedCount={
+          isSelectAllMode ? totalBookingCount : selectedBookingIds.size
+        }
+        onDeleteSelected={handleDeleteSelected}
       />
 
       {isLoadingBookings && !bookingResponse ? (
         <BookingSkeleton />
       ) : (
         <>
+          {selectedBookingIds.size > 0 && (
+            <div className="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 rounded-r-lg">
+              <p>
+                {isSelectAllMode ? (
+                  <>
+                    All {totalBookingCount} bookings matching the current
+                    filters are selected.
+                    <button
+                      onClick={() => dispatch({ type: "CLEAR_SELECTION" })}
+                      className="font-bold underline ml-2"
+                    >
+                      Clear selection
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {t("selectedBookingsCount", {
+                      count: selectedBookingIds.size,
+                    })}{" "}
+                    <button
+                      onClick={() =>
+                        dispatch({ type: "TOGGLE_SELECT_ALL_MODE" })
+                      }
+                      className="font-bold underline ml-2"
+                    >
+                      {t("selectAll", { totalBookingCount: totalBookingCount })}
+                    </button>
+                  </>
+                )}
+              </p>
+            </div>
+          )}
           <BookingTable
             bookings={processedBookings}
             programs={program ? [program] : []}
@@ -520,6 +600,7 @@ export default function BookingPage() {
             selectedIds={selectedBookingIds}
             onSelectOne={handleToggleSelection}
             onSelectAll={handleToggleSelectAll}
+            isSelectAllMode={isSelectAllMode}
           />
 
           {totalPages > 1 && (

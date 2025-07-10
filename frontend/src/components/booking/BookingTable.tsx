@@ -18,8 +18,9 @@ interface BookingTableProps {
   onDeleteBooking: (bookingId: number) => void;
   onManagePayments: (booking: Booking) => void;
   selectedIds: Set<number>;
-  onSelectOne: (id: number, isSelected: boolean) => void;
+  onSelectOne: (id: number) => void;
   onSelectAll: () => void;
+  isSelectAllMode: boolean;
 }
 
 export default function BookingTable({
@@ -31,6 +32,7 @@ export default function BookingTable({
   selectedIds,
   onSelectOne,
   onSelectAll,
+  isSelectAllMode,
 }: BookingTableProps) {
   const { t } = useTranslation();
 
@@ -42,8 +44,8 @@ export default function BookingTable({
   const getStatusText = (isFullyPaid: boolean) =>
     t(isFullyPaid ? "fullyPaid" : "pending");
 
-  const isAllSelected =
-    bookings.length > 0 && selectedIds.size === bookings.length;
+  const isAllOnPageSelected =
+    bookings.length > 0 && bookings.every((b) => selectedIds.has(b.id));
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -55,8 +57,9 @@ export default function BookingTable({
                 <input
                   type="checkbox"
                   className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  checked={isAllSelected}
+                  checked={isSelectAllMode || isAllOnPageSelected}
                   onChange={onSelectAll}
+                  disabled={bookings.length === 0}
                 />
               </th>
               <th
@@ -115,7 +118,7 @@ export default function BookingTable({
                 (sum, payment) => sum + Number(payment.amount),
                 0
               );
-              const isSelected = selectedIds.has(booking.id);
+              const isSelected = isSelectAllMode || selectedIds.has(booking.id);
 
               return (
                 <tr
@@ -129,9 +132,7 @@ export default function BookingTable({
                       type="checkbox"
                       className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                       checked={isSelected}
-                      onChange={(e) =>
-                        onSelectOne(booking.id, e.target.checked)
-                      }
+                      onChange={() => onSelectOne(booking.id)}
                     />
                   </td>
                   <td

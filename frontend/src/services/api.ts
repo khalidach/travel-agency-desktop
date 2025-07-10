@@ -220,10 +220,15 @@ export const updateBooking = (id: number, booking: any) =>
   request(`/bookings/${id}`, { method: "PUT", body: JSON.stringify(booking) });
 export const deleteBooking = (id: number) =>
   request(`/bookings/${id}`, { method: "DELETE" });
-export const deleteMultipleBookings = (ids: number[]) =>
+export const deleteMultipleBookings = (data: {
+  ids?: number[];
+  deleteAllMatchingFilters?: boolean;
+  filters?: { searchTerm: string; statusFilter: string };
+  programId?: string;
+}) =>
   request("/bookings/bulk-delete", {
     method: "POST",
-    body: JSON.stringify({ ids }),
+    body: JSON.stringify(data),
   });
 
 // --- Payment API ---

@@ -11,6 +11,31 @@ const findBookingForUser = (db, user, bookingId) => {
   return booking;
 };
 
+// Helper to build WHERE clause for bulk operations
+const buildFilterWhereClause = (filters) => {
+  const { searchTerm, statusFilter } = filters;
+  let whereConditions = [];
+  const queryParams = [];
+
+  if (searchTerm) {
+    whereConditions.push(
+      `(b."clientNameFr" LIKE ? OR b."clientNameAr" LIKE ? OR b."passportNumber" LIKE ?)`
+    );
+    queryParams.push(`%${searchTerm}%`, `%${searchTerm}%`, `%${searchTerm}%`);
+  }
+  if (statusFilter === "paid") {
+    whereConditions.push('b."isFullyPaid" = 1');
+  } else if (statusFilter === "pending") {
+    whereConditions.push('b."isFullyPaid" = 0');
+  }
+
+  return {
+    clause:
+      whereConditions.length > 0 ? `AND ${whereConditions.join(" AND ")}` : "",
+    params: queryParams,
+  };
+};
+
 exports.getAllBookings = (req, res) => {
   try {
     const { adminId } = req.user;
@@ -246,25 +271,41 @@ exports.deleteBooking = (req, res) => {
 };
 
 exports.deleteMultipleBookings = (req, res) => {
-  const { ids } = req.body;
+  const { ids, deleteAllMatchingFilters, filters, programId } = req.body;
   const { adminId } = req.user;
   const db = req.db;
 
-  if (!Array.isArray(ids) || ids.length === 0) {
-    return res.status(400).json({ message: "No booking IDs provided." });
-  }
-
   try {
     const deleteTransaction = db.transaction(() => {
-      const placeholders = ids.map(() => "?").join(",");
-      const bookingsToDelete = db
-        .prepare(
-          `SELECT "tripId" FROM bookings WHERE id IN (${placeholders}) AND "userId" = ?`
-        )
-        .all(...ids, adminId);
+      let bookingsToDelete;
+      let whereClause = "";
+      let params = [];
 
-      if (bookingsToDelete.length !== ids.length) {
-        throw new Error("One or more bookings not found or not authorized.");
+      if (deleteAllMatchingFilters) {
+        const filterClause = buildFilterWhereClause(filters);
+        whereClause = `WHERE b."userId" = ? AND b."tripId" = ? ${filterClause.clause}`;
+        params = [adminId, programId, ...filterClause.params];
+        bookingsToDelete = db
+          .prepare(`SELECT id, "tripId" FROM bookings b ${whereClause}`)
+          .all(...params);
+      } else {
+        if (!Array.isArray(ids) || ids.length === 0) {
+          return res.status(400).json({ message: "No booking IDs provided." });
+        }
+        const placeholders = ids.map(() => "?").join(",");
+        whereClause = `WHERE id IN (${placeholders}) AND "userId" = ?`;
+        params = [...ids, adminId];
+        bookingsToDelete = db
+          .prepare(`SELECT id, "tripId" FROM bookings ${whereClause}`)
+          .all(...params);
+
+        if (bookingsToDelete.length !== ids.length) {
+          throw new Error("One or more bookings not found or not authorized.");
+        }
+      }
+
+      if (bookingsToDelete.length === 0) {
+        return { message: "No bookings found to delete." };
       }
 
       const programCounts = bookingsToDelete.reduce((acc, booking) => {
@@ -272,10 +313,11 @@ exports.deleteMultipleBookings = (req, res) => {
         return acc;
       }, {});
 
-      const deleteStmt = db.prepare(
-        `DELETE FROM bookings WHERE id IN (${placeholders}) AND "userId" = ?`
-      );
-      deleteStmt.run(...ids, adminId);
+      const deleteIds = bookingsToDelete.map((b) => b.id);
+      const deletePlaceholders = deleteIds.map(() => "?").join(",");
+      db.prepare(
+        `DELETE FROM bookings WHERE id IN (${deletePlaceholders})`
+      ).run(...deleteIds);
 
       const updateProgramStmt = db.prepare(
         'UPDATE programs SET "totalBookings" = "totalBookings" - ? WHERE id = ?'
@@ -283,10 +325,12 @@ exports.deleteMultipleBookings = (req, res) => {
       for (const tripId in programCounts) {
         updateProgramStmt.run(programCounts[tripId], tripId);
       }
+
+      return { message: `${deleteIds.length} bookings deleted successfully.` };
     });
 
-    deleteTransaction();
-    res.json({ message: "Selected bookings deleted successfully." });
+    const result = deleteTransaction();
+    res.json(result);
   } catch (error) {
     console.error("Bulk Delete Bookings Error:", error);
     res.status(500).json({ message: error.message });

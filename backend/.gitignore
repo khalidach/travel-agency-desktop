@@ -8,6 +8,8 @@ yarn.lock
 .env.local
 .env.*.local
 
+travel_agency.db
+
 addUser.js
 # Logs
 logs
